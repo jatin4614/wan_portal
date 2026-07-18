@@ -1,0 +1,271 @@
+{% extends "base.html" %}
+{% block title %}Import / Export | Vajr Comn State{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Import / Export
+      <small style="font-size:12px;color:var(--text-faint);font-weight:500;">Admin only · 5 sections</small>
+    </h1>
+  </div>
+</div>
+
+<!-- ============ 1. Offline Map Upload (MBTiles) ============ -->
+<div class="card" style="margin-bottom:14px;">
+  <div class="card-head">
+    <div class="card-title">
+      <span class="card-title-icon" style="background:var(--info-bg);color:var(--info);">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>
+      </span>
+      1. Offline Map (MBTiles)
+    </div>
+    <div class="card-sub" id="mbStatus">checking…</div>
+  </div>
+  <p style="color:var(--text-dim);margin-bottom:14px;font-size:13px;">
+    Upload an offline map file. Two formats are supported:
+  </p>
+  <ul style="font-size:12px;color:var(--text-dim);margin-bottom:14px;line-height:1.7;padding-left:24px;">
+    <li><strong>.pmtiles</strong> — <em>recommended</em>. A modern single-file format with much better cartography. Vector PMTiles render crisply at any zoom and produce a Google-Maps-quality look.</li>
+    <li><strong>.mbtiles</strong> — classic raster tile container. Larger files, fixed-resolution at each zoom level.</li>
+  </ul>
+  <p style="color:var(--text-faint);font-size:12px;margin-bottom:14px;">
+    Where to get a file: download a region from
+    <a href="https://maps.protomaps.com/builds/" target="_blank" rel="noopener">maps.protomaps.com/builds</a>
+    (PMTiles, free) or build one with the
+    <a href="https://app.protomaps.com/" target="_blank" rel="noopener">Protomaps app</a>.
+    Suggested bbox for North India: lat 26&deg;–37&deg;N, lng 72&deg;–82&deg;E.
+    Current upload limit:
+    <strong>{% if upload_cap_mb == 'unlimited' %}unlimited{% else %}{{ upload_cap_mb }} MB{% endif %}</strong>
+    (set <code>MAX_UPLOAD_MB</code> env var to change; <code>MAX_UPLOAD_MB=0</code> disables the cap).
+  </p>
+  <form id="mbUploadForm" enctype="multipart/form-data" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+    <div style="flex:1;min-width:220px;">
+      <label>Map File (.pmtiles or .mbtiles)</label>
+      <input type="file" name="file" accept=".pmtiles,.mbtiles" required>
+    </div>
+    <button type="submit" class="btn btn-primary">Upload Map</button>
+    <button type="button" class="btn btn-danger" id="mbDelete" style="display:none;">Remove Map</button>
+  </form>
+  <div id="mbResult" style="margin-top:14px;"></div>
+</div>
+
+<!-- ============ 2. Download Excel Template ============ -->
+<div class="card" style="margin-bottom:14px;">
+  <div class="card-head">
+    <div class="card-title">
+      <span class="card-title-icon" style="background:var(--good-bg);color:var(--good);">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      </span>
+      2. Download Excel Template
+    </div>
+  </div>
+  <p style="color:var(--text-dim);margin-bottom:14px;font-size:13px;">
+    Download a blank Excel template pre-formatted with the latest column layout for each data type.
+    Fill in your data and upload it back in section 3 to sync the system.
+  </p>
+  <a href="/api/template-excel" class="btn btn-primary">⬇ Download wan_template.xlsx</a>
+  <div style="margin-top:16px;font-size:12px;color:var(--text-faint);line-height:1.7;">
+    <strong style="color:var(--text-dim);">Sheets included:</strong><br>
+    <span class="mono">Nodes</span> ·
+    <span class="mono">OFC_Links</span> ·
+    <span class="mono">Alternate_Media</span> ·
+    <span class="mono">Terminal_Equipment</span> ·
+    <span class="mono">Radio_Equipment</span> ·
+    <span class="mono">Equipment_Types</span> ·
+    <span class="mono">Fault_Logs</span>
+  </div>
+</div>
+
+<!-- ============ 3. Upload (Sync) Updated Excel ============ -->
+<div class="card" style="margin-bottom:14px;">
+  <div class="card-head">
+    <div class="card-title">
+      <span class="card-title-icon" style="background:var(--info-bg);color:var(--info);">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      </span>
+      3. Upload Updated Excel (Sync)
+    </div>
+  </div>
+  <p style="color:var(--text-dim);margin-bottom:14px;font-size:13px;">
+    Upload a filled-in Excel file to synchronize the system data.
+    <strong style="color:var(--good);">Existing data is preserved.</strong>
+    The system will:
+  </p>
+  <ul style="font-size:12px;color:var(--text-dim);margin-bottom:14px;line-height:1.7;padding-left:24px;">
+    <li><strong>Add</strong> rows present in the sheet that aren't already in the database</li>
+    <li><strong>Update</strong> existing rows that match by their unique key</li>
+    <li><strong>Remove</strong> database rows whose key is not present in the uploaded sheet (redundant data cleanup)</li>
+    <li>A sheet that's missing from your upload leaves that table untouched</li>
+  </ul>
+  <form id="uploadForm" enctype="multipart/form-data">
+    <div style="margin-bottom:12px;">
+      <label>Excel File</label>
+      <input type="file" name="file" accept=".xlsx,.xls" required>
+    </div>
+    <input type="hidden" name="mode" value="sync">
+    <button type="submit" class="btn btn-primary">Upload &amp; Sync</button>
+  </form>
+  <div id="uploadResult" style="margin-top:16px;"></div>
+</div>
+
+<!-- ============ 4. Export Current Data ============ -->
+<div class="card" style="margin-bottom:14px;">
+  <div class="card-head">
+    <div class="card-title">
+      <span class="card-title-icon" style="background:var(--purple-bg, #ede9fe);color:var(--purple, #7c3aed);">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      </span>
+      4. Export Current Data
+    </div>
+  </div>
+  <p style="color:var(--text-dim);margin-bottom:14px;font-size:13px;">
+    Download a single Excel workbook containing all current data — one sheet per category.
+    Use this to back up your data, or as a starting point for bulk edits before re-uploading via section 3.
+  </p>
+  <a href="/api/export-excel" class="btn btn-primary">⬇ Download wan_data.xlsx</a>
+</div>
+
+<!-- ============ 5. Seed Hierarchy Data ============ -->
+<div class="card" style="margin-bottom:14px;">
+  <div class="card-head">
+    <div class="card-title">
+      <span class="card-title-icon" style="background:var(--warn-bg);color:var(--warn);">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
+      </span>
+      5. Seed Hierarchy Data
+    </div>
+  </div>
+  <p style="color:var(--text-dim);margin-bottom:14px;font-size:13px;">
+    Generate a 166-node formation hierarchy in North India:
+    <strong>1 Div + 5 Bde + 20 Bn + 40 Coy + 100 Post</strong>,
+    with OFC links following the chain of command (Div → Bde → Bn → Coy → Post),
+    plus alternate-media, terminal equipment and radio equipment for each node.
+    Useful as realistic test data.
+    <strong style="color:var(--bad)">This will erase existing nodes, OFC, equipment, alt-media and radio data.</strong>
+  </p>
+  <button id="seedHierBtn" class="btn btn-primary">Seed Hierarchy Data</button>
+  <div id="seedHierResult" style="margin-top:12px;"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ===== 1. MBTiles Offline Map =====
+async function refreshMbStatus() {
+  const info = await fetch('/api/tiles/info').then(r => r.json());
+  const status = document.getElementById('mbStatus');
+  const del = document.getElementById('mbDelete');
+  if (info.loaded) {
+    const sizeMB = (info.size_bytes / (1024 * 1024)).toFixed(1);
+    const fmt = (info.format_container || '').toUpperCase();
+    const flavor = info.is_vector ? 'vector' : (info.format || '');
+    status.innerHTML = `<span style="color:var(--good);font-weight:700;">● Loaded</span> · ${info.name} · ${fmt}${flavor ? ' (' + flavor + ')' : ''} · ${sizeMB} MB · zoom ${info.minzoom}–${info.maxzoom}`;
+    del.style.display = 'inline-flex';
+  } else {
+    status.innerHTML = '<span style="color:var(--text-faint);">No map loaded — using OpenStreetMap online</span>';
+    del.style.display = 'none';
+  }
+}
+refreshMbStatus();
+
+document.getElementById('mbUploadForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const fileInput = e.target.querySelector('input[name=file]');
+  const fileSize = fileInput.files[0] ? fileInput.files[0].size : 0;
+  const sizeMB = (fileSize / 1024 / 1024).toFixed(1);
+  const result = document.getElementById('mbResult');
+  result.innerHTML = `<div class="flash">Uploading ${sizeMB} MB… (large files may take a while)</div>`;
+  let resp, data;
+  try {
+    resp = await fetch('/api/tiles/upload', { method: 'POST', body: fd });
+  } catch (netErr) {
+    result.innerHTML = `<div class="flash flash-error">Network error: ${netErr.message}</div>`;
+    return;
+  }
+  // Servers may return 413 with a non-JSON body (proxy default error pages, etc.)
+  try {
+    data = await resp.json();
+  } catch (parseErr) {
+    if (resp.status === 413) {
+      result.innerHTML = `<div class="flash flash-error">
+        <strong>413 Payload Too Large</strong> — the server (or a reverse proxy in front of it) is
+        rejecting the upload as too big. Your file is ${sizeMB} MB.
+        Raise <code>MAX_UPLOAD_MB</code> in the environment, and if you are behind nginx/Apache/IIS,
+        also raise the proxy's upload limit (see the README).
+      </div>`;
+    } else {
+      result.innerHTML = `<div class="flash flash-error">HTTP ${resp.status}: ${resp.statusText}</div>`;
+    }
+    return;
+  }
+  if (!resp.ok || data.error) {
+    result.innerHTML = `<div class="flash flash-error">${data.error || ('HTTP ' + resp.status)}</div>`;
+  } else {
+    result.innerHTML = '<div class="flash flash-success">Map uploaded. Reload the dashboard to see it.</div>';
+  }
+  refreshMbStatus();
+};
+
+document.getElementById('mbDelete').onclick = async () => {
+  if (!confirm('Remove the loaded map file? Map will revert to online OSM.')) return;
+  await fetch('/api/tiles/delete', { method: 'POST' });
+  document.getElementById('mbResult').innerHTML = '';
+  refreshMbStatus();
+};
+
+// ===== 3. Upload Excel (Sync) =====
+document.getElementById('uploadForm').onsubmit = async (e) => {
+  e.preventDefault();
+  if (!confirm('Sync will ADD new rows, UPDATE matching rows, and REMOVE database rows whose key is not in your sheet. Continue?')) return;
+  const fd = new FormData(e.target);
+  const result = document.getElementById('uploadResult');
+  result.innerHTML = '<div class="flash">Syncing…</div>';
+  const resp = await fetch('/api/upload-excel', { method: 'POST', body: fd });
+  const data = await resp.json();
+  if (data.error) {
+    result.innerHTML = `<div class="flash flash-error">${data.error}</div>`;
+    return;
+  }
+  let html = `<div class="flash flash-success">Sync complete (mode: <strong>${data.mode}</strong>).</div>
+    <div class="tbl-wrap"><table class="tbl"><thead><tr>
+      <th>Sheet</th><th>Status</th><th>Added</th><th>Updated</th><th>Removed</th>
+    </tr></thead><tbody>`;
+  for (const [k, v] of Object.entries(data.summary)) {
+    html += `<tr>
+      <td class="mono">${k}</td>
+      <td>${v.status}</td>
+      <td class="mono">${v.inserted ?? '—'}</td>
+      <td class="mono">${v.updated ?? '—'}</td>
+      <td class="mono" style="color:${(v.deleted||0)>0?'var(--bad)':'inherit'};">${v.deleted ?? '—'}</td>
+    </tr>`;
+  }
+  html += '</tbody></table></div>';
+  result.innerHTML = html;
+};
+
+// ===== 5. Seed Hierarchy =====
+document.getElementById('seedHierBtn').onclick = async () => {
+  if (!confirm('This will erase all existing nodes, OFC links, equipment, alternate media and radio data, then generate the full hierarchy. Continue?')) return;
+  const result = document.getElementById('seedHierResult');
+  result.innerHTML = '<div class="flash">Generating hierarchy data… (may take a few seconds)</div>';
+  const resp = await fetch('/api/seed-hierarchy', { method: 'POST' });
+  const data = await resp.json();
+  if (data.error) {
+    result.innerHTML = `<div class="flash flash-error">${data.error}</div>`;
+  } else {
+    result.innerHTML = `<div class="flash flash-success">
+      Created <strong>${data.nodes} nodes</strong>,
+      <strong>${data.ofc_links} OFC links</strong>,
+      <strong>${data.terminal_equipment} terminal equipment</strong>
+      with ${data.ports} ports,
+      <strong>${data.alternate_media} alternate-media links</strong>,
+      and <strong>${data.radio_equipment} radio sets</strong>.
+      Refresh to see them.
+    </div>`;
+  }
+};
+</script>
+{% endblock %}

@@ -1,0 +1,412 @@
+{% extends "base.html" %}
+{% block title %}Nodes | Vajr Comn State{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/><line x1="9" y1="9" x2="7" y2="7"/><line x1="15" y1="9" x2="17" y2="7"/><line x1="9" y1="15" x2="7" y2="17"/><line x1="15" y1="15" x2="17" y2="17"/></svg>
+      Nodes
+    </h1>
+  </div>
+  <div class="page-meta" id="nodeMeta">—</div>
+</div>
+
+<!-- Summary tiles by type -->
+<div class="hero-stats" id="typeSummary"></div>
+
+<!-- Filters (all inline, dependent dropdowns) -->
+<div class="topo-controls" style="flex-wrap:wrap;align-items:center;">
+  <button class="btn btn-primary" id="addBtn">＋ Add Node</button>
+  <input type="text" id="searchInput" placeholder="Search…" style="min-width:180px;">
+  <select id="typeFilter"><option value="">All Types</option></select>
+  <select id="formationFilter"><option value="">All Formations</option></select>
+  <!-- Unit and Coy are hidden initially; revealed by parent selection -->
+  <select id="unitFilter" style="display:none;"><option value="">All Units</option></select>
+  <select id="coyFilter" style="display:none;"><option value="">All Coys</option></select>
+  <button class="btn btn-sm" id="clearFiltersBtn" style="display:none;">Clear filters</button>
+</div>
+
+<div class="card">
+  <div class="tbl-wrap">
+    <table class="tbl" id="dataTable">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Formation</th>
+          <th>Unit</th>
+          <th>Coy</th>
+          <th>Location</th>
+          <th>Lat / Lng</th>
+          <th>Contact No.</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Modal -->
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="modalTitle">Add Node</div>
+      <button class="close-btn" id="closeBtn">×</button>
+    </div>
+    <form id="entryForm">
+      <div class="form-grid" id="formFields"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+        <button type="button" class="btn" id="cancelBtn">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const NODE_TYPES = ["Div", "Div-Access", "Bde", "Bde-Access", "Bn", "Coy", "Post"];
+
+const COLUMNS = [
+  { f: 'name',       label: 'Name (UPPERCASE, no spaces)' },
+  { f: 'node_type',  label: 'Type', type: 'select', options: NODE_TYPES },
+  { f: 'formation',  label: 'Formation' },
+  { f: 'unit',       label: 'Unit (Nil if not applicable)' },
+  { f: 'coy',        label: 'Coy (Nil if not applicable)' },
+  { f: 'region',     label: 'Location' },
+  { f: 'latitude',   label: 'Latitude',  type: 'number', step: '0.0001' },
+  { f: 'longitude',  label: 'Longitude', type: 'number', step: '0.0001' },
+  { f: 'contact_no', label: 'Contact No.' },
+  { f: 'remarks',    label: 'Remarks', full: true },
+];
+
+let currentData = [];
+let editingId = null;
+
+async function loadTable() {
+  currentData = await fetch('/api/nodes').then(r => r.json());
+
+  // Populate type filter (independent of hierarchy)
+  const types = [...new Set(currentData.map(n => n.node_type).filter(Boolean))].sort();
+  const tf = document.getElementById('typeFilter');
+  const oldT = tf.value;
+  tf.innerHTML = '<option value="">All Types</option>' +
+    types.map(t => `<option ${t===oldT?'selected':''}>${t}</option>`).join('');
+
+  // Populate Formation filter — always visible (top of the hierarchy)
+  const formations = [...new Set(currentData.map(n => n.formation).filter(Boolean))].sort();
+  const ff = document.getElementById('formationFilter');
+  const oldF = ff.value;
+  ff.innerHTML = '<option value="">All Formations</option>' +
+    formations.map(f => `<option ${f===oldF?'selected':''}>${f}</option>`).join('');
+
+  refreshDependentDropdowns();
+  renderSummary();
+  renderTable();
+}
+
+function refreshDependentDropdowns() {
+  const formationF = document.getElementById('formationFilter').value;
+  const unitSel = document.getElementById('unitFilter');
+  const coySel  = document.getElementById('coyFilter');
+  const clearBtn = document.getElementById('clearFiltersBtn');
+
+  // Unit dropdown: shown only when a Formation is picked
+  if (formationF) {
+    const units = [...new Set(
+      currentData.filter(n => n.formation === formationF)
+                 .map(n => n.unit)
+                 .filter(Boolean)
+    )].sort();
+    const oldU = unitSel.value;
+    unitSel.innerHTML = '<option value="">All Units</option>' +
+      units.map(u => `<option ${u===oldU?'selected':''}>${u}</option>`).join('');
+    unitSel.style.display = '';
+  } else {
+    unitSel.value = '';
+    unitSel.style.display = 'none';
+  }
+
+  // Coy dropdown: shown only when both Formation + Unit are picked
+  if (formationF && unitSel.value) {
+    const coys = [...new Set(
+      currentData.filter(n => n.formation === formationF && n.unit === unitSel.value)
+                 .map(n => n.coy)
+                 .filter(Boolean)
+    )].sort();
+    const oldC = coySel.value;
+    coySel.innerHTML = '<option value="">All Coys</option>' +
+      coys.map(c => `<option ${c===oldC?'selected':''}>${c}</option>`).join('');
+    coySel.style.display = '';
+  } else {
+    coySel.value = '';
+    coySel.style.display = 'none';
+  }
+
+  // Clear button visible when any filter has a value
+  const anySelected = formationF || unitSel.value || coySel.value
+                   || document.getElementById('typeFilter').value
+                   || document.getElementById('searchInput').value;
+  clearBtn.style.display = anySelected ? '' : 'none';
+}
+
+function renderSummary() {
+  const counts = {};
+  NODE_TYPES.forEach(t => counts[t] = 0);
+  currentData.forEach(n => { if (counts[n.node_type] !== undefined) counts[n.node_type]++; });
+
+  const wrap = document.getElementById('typeSummary');
+  wrap.style.gridTemplateColumns = `repeat(${NODE_TYPES.length}, 1fr)`;
+  wrap.innerHTML = NODE_TYPES.map(t => {
+    const tone = (t === 'Div' || t === 'Div-Access') ? 'bad'
+               : (t === 'Bde' || t === 'Bde-Access') ? 'warn'
+               : (t === 'Bn') ? 'info'
+               : (t === 'Coy') ? 'good'
+               : 'purple';
+    return `
+      <div class="hero-tile tone-${tone}" style="padding:12px 14px;">
+        <div class="hero-body">
+          <div class="hero-label">${t}</div>
+          <div class="hero-value" style="font-size:22px;">${counts[t]}</div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function renderTable() {
+  const search     = document.getElementById('searchInput').value.toLowerCase();
+  const typeF      = document.getElementById('typeFilter').value;
+  const formationF = document.getElementById('formationFilter').value;
+  const unitF      = document.getElementById('unitFilter').value;
+  const coyF       = document.getElementById('coyFilter').value;
+
+  const filtered = currentData.filter(r => {
+    if (typeF      && r.node_type !== typeF)        return false;
+    if (formationF && r.formation !== formationF)   return false;
+    if (unitF      && r.unit      !== unitF)        return false;
+    if (coyF       && r.coy       !== coyF)         return false;
+    if (!search) return true;
+    return Object.values(r).some(v => String(v).toLowerCase().includes(search));
+  });
+
+  // When a Coy is selected, surface its Posts first
+  if (coyF) {
+    filtered.sort((a, b) => {
+      const aIsPost = a.node_type === 'Post' ? 0 : 1;
+      const bIsPost = b.node_type === 'Post' ? 0 : 1;
+      if (aIsPost !== bIsPost) return aIsPost - bIsPost;
+      return a.name.localeCompare(b.name);
+    });
+  }
+
+  const tbody = document.querySelector('#dataTable tbody');
+  if (!filtered.length) {
+    tbody.innerHTML = `<tr><td colspan="9" class="empty">No nodes match the filters. Try clearing them or seeding hierarchy data from Import / Export.</td></tr>`;
+  } else {
+    tbody.innerHTML = filtered.map(n => `
+      <tr>
+        <td class="mono"><strong><span class="linkid-clickable" onclick="showNodeDetail('${n.name.replace(/'/g, "\\'")}')">${n.name}</span></strong></td>
+        <td><span class="badge badge-${(n.node_type || '').toLowerCase().replace(/[^a-z]/g,'')}">${n.node_type || '—'}</span></td>
+        <td>${n.formation || '<span style="color:var(--text-faint);">Nil</span>'}</td>
+        <td>${n.unit      || '<span style="color:var(--text-faint);">Nil</span>'}</td>
+        <td>${n.coy       || '<span style="color:var(--text-faint);">Nil</span>'}</td>
+        <td>${n.region    || '—'}</td>
+        <td class="mono" style="font-size:11px;">${(n.latitude ?? '—')}, ${(n.longitude ?? '—')}</td>
+        <td class="mono" style="font-size:12px;">${n.contact_no || '—'}</td>
+        <td><div class="row-actions">
+          <button class="btn btn-sm" onclick="editRow(${n.id})">Edit</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteRow(${n.id})">Del</button>
+        </div></td>
+      </tr>`).join('');
+  }
+
+  document.getElementById('nodeMeta').textContent = `${filtered.length} of ${currentData.length} nodes`;
+}
+
+function buildForm(data = {}) {
+  document.getElementById('formFields').innerHTML = COLUMNS.map(c => {
+    let input;
+    if (c.type === 'select') {
+      input = `<select name="${c.f}">
+        <option value="">—</option>
+        ${c.options.map(o => `<option ${data[c.f]===o?'selected':''}>${o}</option>`).join('')}
+      </select>`;
+    } else if (c.type === 'number') {
+      input = `<input type="number" name="${c.f}" step="${c.step || '1'}" value="${data[c.f] ?? ''}">`;
+    } else {
+      input = `<input type="text" name="${c.f}" value="${data[c.f] ?? ''}">`;
+    }
+    return `<div class="${c.full ? 'full' : ''}"><label>${c.label}</label>${input}</div>`;
+  }).join('');
+}
+
+window.editRow = (id) => {
+  const row = currentData.find(r => r.id === id);
+  if (!row) return;
+  editingId = id;
+  document.getElementById('modalTitle').textContent = 'Edit Node';
+  buildForm(row);
+  document.getElementById('modalBg').classList.add('show');
+};
+
+window.deleteRow = async (id) => {
+  if (!confirm('Delete this node? OFC links/equipment referencing it will be left orphaned.')) return;
+  await fetch(`/api/nodes/${id}`, { method: 'DELETE' });
+  loadTable();
+};
+
+document.getElementById('addBtn').onclick = () => {
+  editingId = null;
+  document.getElementById('modalTitle').textContent = 'Add Node';
+  buildForm({});
+  document.getElementById('modalBg').classList.add('show');
+};
+document.getElementById('closeBtn').onclick = document.getElementById('cancelBtn').onclick = () =>
+  document.getElementById('modalBg').classList.remove('show');
+
+document.getElementById('entryForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const body = {};
+  COLUMNS.forEach(c => {
+    let v = fd.get(c.f);
+    if (v === '' || v == null) v = null;
+    else if (c.type === 'number') v = parseFloat(v);
+    body[c.f] = v;
+  });
+  const url = editingId ? `/api/nodes/${editingId}` : '/api/nodes';
+  const method = editingId ? 'PUT' : 'POST';
+  const resp = await fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const j = await resp.json();
+  if (j.error) { alert(j.error); return; }
+  document.getElementById('modalBg').classList.remove('show');
+  loadTable();
+};
+
+// Dependent filter behavior
+document.getElementById('formationFilter').onchange = () => {
+  document.getElementById('unitFilter').value = '';
+  document.getElementById('coyFilter').value = '';
+  refreshDependentDropdowns();
+  renderTable();
+};
+document.getElementById('unitFilter').onchange = () => {
+  document.getElementById('coyFilter').value = '';
+  refreshDependentDropdowns();
+  renderTable();
+};
+document.getElementById('coyFilter').onchange = () => {
+  refreshDependentDropdowns();
+  renderTable();
+};
+document.getElementById('typeFilter').onchange = () => { refreshDependentDropdowns(); renderTable(); };
+document.getElementById('searchInput').oninput  = () => { refreshDependentDropdowns(); renderTable(); };
+document.getElementById('clearFiltersBtn').onclick = () => {
+  document.getElementById('searchInput').value = '';
+  document.getElementById('typeFilter').value = '';
+  document.getElementById('formationFilter').value = '';
+  document.getElementById('unitFilter').value = '';
+  document.getElementById('coyFilter').value = '';
+  refreshDependentDropdowns();
+  renderTable();
+};
+
+// ===== Node detail modal (same content as dashboard map popup) =====
+const MEDIA_ICON = {
+  'Microwave':       { emoji: '🗼' },
+  'Satellite':       { emoji: '🛰️' },
+  'Broadband Radio': { emoji: '📡' },
+  'BTS':             { emoji: '📶' },
+  'Cellular Tower':  { emoji: '📶' },
+  'Copper JFC':      { emoji: '🔌' },
+  'URRF':            { emoji: '📻' },
+  'RRF':             { emoji: '📻' },
+};
+
+async function nodeDetailHtml(name) {
+  const data = await fetch(`/api/node-detail/${encodeURIComponent(name)}`).then(r => r.json());
+  if (data.error) return `<div class="node-popup-title">${name}</div><div>Not found</div>`;
+
+  const stateColor = data.state === 'FULL' ? '#059669'
+                   : data.state === 'DEGRADED' ? '#d97706' : '#dc2626';
+  const badge = s => `<span class="badge badge-${(s||'').toLowerCase()}">${s||'—'}</span>`;
+
+  let html = `
+    <div class="node-popup-title">${data.node.name}</div>
+    <div class="node-popup-meta">
+      ${data.node.region || ''} · ${data.node.node_type || ''}
+      <span style="color:${stateColor};font-weight:700;margin-left:6px;">[${data.state}]</span>
+    </div>
+    <div class="node-popup-section" style="padding-top:8px;">
+      <div style="display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--text-dim);">
+        ${data.node.formation ? `<span><strong>Formation:</strong> ${data.node.formation}</span>` : ''}
+        ${data.node.unit ? `<span><strong>Unit:</strong> ${data.node.unit}</span>` : ''}
+        ${data.node.coy ? `<span><strong>Coy:</strong> ${data.node.coy}</span>` : ''}
+        <span><strong>Contact No:</strong> ${data.node.contact_no || '—'}</span>
+      </div>
+    </div>
+  `;
+
+  if (data.ofc_links.length) {
+    html += `<div class="node-popup-section"><div class="node-popup-section-title">OFC Links (${data.ofc_links.length})</div><ul class="node-popup-list">`;
+    data.ofc_links.forEach(l => {
+      const other = l.from_node === name ? l.to_node : l.from_node;
+      html += `<li><span class="name">${l.link_id} → ${other}</span>${badge(l.status)}</li>`;
+    });
+    html += '</ul></div>';
+  }
+  if (data.alt_media.length) {
+    html += `<div class="node-popup-section"><div class="node-popup-section-title">Alternate Media (${data.alt_media.length})</div><ul class="node-popup-list">`;
+    data.alt_media.forEach(l => {
+      const icon = (MEDIA_ICON[l.media_type] || {}).emoji || '';
+      const other = l.to_node ? (l.from_node === name ? l.to_node : l.from_node) : '(local)';
+      html += `<li><span class="name">${icon} ${l.media_type} ${l.to_node ? '→ ' + other : ''}</span>${badge(l.status)}</li>`;
+    });
+    html += '</ul></div>';
+  }
+  if (data.terminal_equipment.length) {
+    html += `<div class="node-popup-section"><div class="node-popup-section-title">Terminal Equipment (${data.terminal_equipment.length})</div><ul class="node-popup-list">`;
+    data.terminal_equipment.forEach(e => {
+      html += `<li><span class="name">${e.equipment_id}</span><span class="meta">${e.eqpt_type} · ${e.status}</span></li>`;
+    });
+    html += '</ul></div>';
+  }
+  if (data.radio_equipment.length) {
+    html += `<div class="node-popup-section"><div class="node-popup-section-title">Radio Equipment (${data.radio_equipment.length})</div><ul class="node-popup-list">`;
+    data.radio_equipment.forEach(e => {
+      html += `<li><span class="name">${e.equipment_id}</span><span class="meta">${e.radio_type} · ${e.status}</span></li>`;
+    });
+    html += '</ul></div>';
+  }
+  return html;
+}
+
+window.showNodeDetail = async function(name) {
+  let modal = document.getElementById('nodeDetailModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'nodeDetailModal';
+    modal.className = 'modal-bg';
+    modal.innerHTML = `<div class="modal" style="max-width:540px;">
+      <div class="modal-head"><div class="modal-title">Node Detail</div>
+      <button class="close-btn" id="ndClose">×</button></div>
+      <div id="ndBody"></div></div>`;
+    document.body.appendChild(modal);
+    modal.querySelector('#ndClose').onclick = () => modal.classList.remove('show');
+    modal.onclick = (e) => { if (e.target === modal) modal.classList.remove('show'); };
+  }
+  modal.querySelector('#ndBody').innerHTML = '<div class="empty">Loading…</div>';
+  modal.classList.add('show');
+  modal.querySelector('#ndBody').innerHTML = await nodeDetailHtml(name);
+};
+
+loadTable();
+</script>
+{% endblock %}

@@ -1,0 +1,303 @@
+{% extends "base.html" %}
+{% block title %}Daily Outage | Vajr Comn State{% endblock %}
+
+{% block head_extra %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg>
+      Daily Outage
+    </h1>
+  </div>
+  <div class="page-meta">{{ generated_at }}</div>
+</div>
+
+<!-- ===================== SECTION 1: Today's fresh faults ===================== -->
+<div class="card" style="margin-bottom:16px;">
+  <div class="card-head">
+    <div class="card-title">
+      <span class="card-title-icon" style="background:var(--bad-bg);color:var(--bad);">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      </span>
+      Fresh Faults Today
+    </div>
+    <div class="card-sub" id="todayCount">—</div>
+  </div>
+  <div id="todaySection"><div class="empty">Loading…</div></div>
+</div>
+
+<!-- ===================== SECTION 2: Total faults ===================== -->
+<div class="card" style="margin-bottom:16px;">
+  <div class="card-head">
+    <div class="card-title">
+      <span class="card-title-icon" style="background:var(--warn-bg);color:var(--warn);">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+      </span>
+      Total Faults (All Time)
+    </div>
+    <div class="card-sub" id="totalCount">—</div>
+  </div>
+  <div id="totalSection"><div class="empty">Loading…</div></div>
+</div>
+
+<!-- ===================== SECTION 3: Misc Communication Activity ===================== -->
+<div class="card" style="margin-bottom:16px;">
+  <div class="card-head">
+    <div class="card-title">
+      <span class="card-title-icon" style="background:var(--info-bg);color:var(--info);">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      </span>
+      Misc Communication Activity
+    </div>
+    <button class="btn btn-primary btn-sm" id="addActivityBtn">＋ Add Activity</button>
+  </div>
+  <p style="font-size:12px;color:var(--text-faint);margin-bottom:12px;" id="activityScopeNote"></p>
+  <div id="activityList"><div class="empty">Loading…</div></div>
+</div>
+
+<!-- ===================== SECTION 4: Charts ===================== -->
+<div class="grid-3">
+  <div class="card">
+    <div class="card-head"><div class="card-title">Faults by Category</div></div>
+    <div class="chart-wrap"><canvas id="catChart"></canvas></div>
+  </div>
+  <div class="card">
+    <div class="card-head"><div class="card-title">Open Faults by Severity</div></div>
+    <div class="chart-wrap"><canvas id="sevChart"></canvas></div>
+  </div>
+  <div class="card">
+    <div class="card-head"><div class="card-title">Faults Timeline (30d)</div></div>
+    <div class="chart-wrap"><canvas id="timeChart"></canvas></div>
+  </div>
+</div>
+
+<!-- Activity add/edit modal -->
+<div class="modal-bg" id="activityModal">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="activityModalTitle">Add Activity</div>
+      <button class="close-btn" id="activityClose">×</button>
+    </div>
+    <form id="activityForm">
+      <div>
+        <label>Activity / Comment</label>
+        <textarea name="content" rows="5" required placeholder="Describe the communication activity carried out today…"></textarea>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;">
+        <button type="button" class="btn" id="activityCancel">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const BUCKET_META = {
+  'Communication Links': { color: 'var(--info)',   icon: '🔗' },
+  'Alternate Media':     { color: 'var(--purple)', icon: '📡' },
+  'Terminal Equipment':  { color: 'var(--warn)',   icon: '🖥️' },
+  'Radio Equipment':     { color: 'var(--good)',   icon: '📻' },
+};
+
+function renderGroupedSection(containerId, grouped, buckets) {
+  const wrap = document.getElementById(containerId);
+  const formations = Object.keys(grouped).sort();
+  if (!formations.length) {
+    wrap.innerHTML = '<div class="empty">No faults to report.</div>';
+    return;
+  }
+  wrap.innerHTML = formations.map(formation => {
+    const counts = grouped[formation];
+    const total = buckets.reduce((s, b) => s + (counts[b] || 0), 0);
+    const tone = total > 0 ? 'bad' : 'good';
+    const rows = buckets.map(b => {
+      const n = counts[b] || 0;
+      const meta = BUCKET_META[b] || {};
+      return `
+        <div style="display:flex;align-items:center;justify-content:space-between;
+                    padding:8px 12px;border-bottom:1px dashed var(--border);">
+          <span style="font-size:13px;color:var(--text);">
+            <span style="margin-right:6px;">${meta.icon || ''}</span>${b}
+          </span>
+          <span class="badge ${n>0 ? 'badge-high' : 'badge-low'}">${n}</span>
+        </div>`;
+    }).join('');
+    return `
+      <div style="border:1px solid var(--border);border-radius:10px;margin-bottom:12px;overflow:hidden;">
+        <div style="display:flex;align-items:center;justify-content:space-between;
+                    padding:10px 14px;background:var(--bg-subtle);
+                    border-left:4px solid var(--${tone === 'bad' ? 'bad' : 'good'});">
+          <div style="font-weight:700;color:var(--text);font-size:13px;">${formation}</div>
+          <div style="font-size:12px;color:var(--text-dim);">
+            Total: <strong style="color:var(--${tone === 'bad' ? 'bad' : 'good'});">${total}</strong>
+          </div>
+        </div>
+        <div>${rows}</div>
+      </div>`;
+  }).join('');
+}
+
+async function loadOutageData() {
+  const d = await fetch('/api/daily-outage-data').then(r => r.json());
+  document.getElementById('todayCount').textContent =
+    `${d.today_count} fresh fault${d.today_count === 1 ? '' : 's'} (${d.date})`;
+  document.getElementById('totalCount').textContent =
+    `${d.total_count} total fault${d.total_count === 1 ? '' : 's'}`;
+  renderGroupedSection('todaySection', d.today, d.buckets);
+  renderGroupedSection('totalSection', d.total, d.buckets);
+}
+
+// ---- Misc activities ----
+let editingActivityId = null;
+
+async function loadActivities() {
+  const data = await fetch('/api/misc-activities').then(r => r.json());
+  const list = document.getElementById('activityList');
+  const note = document.getElementById('activityScopeNote');
+  const role = data.viewer_role || '';
+  const isDivAdmin = role === 'Admin' || role.toLowerCase().includes('div');
+  note.textContent = isDivAdmin
+    ? 'You can see activity comments from all users.'
+    : 'You can see only your own activity comments. Div/Admin users can see everyone\u2019s.';
+
+  if (!data.activities.length) {
+    list.innerHTML = '<div class="empty">No activities logged yet.</div>';
+    return;
+  }
+  list.innerHTML = data.activities.map(a => `
+    <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+        <div style="flex:1;">
+          <div style="font-size:13px;color:var(--text);white-space:pre-wrap;">${escapeHtml(a.content)}</div>
+          <div style="font-size:11px;color:var(--text-faint);margin-top:8px;">
+            <strong>${a.author_username}</strong> · ${a.author_role}
+            · ${(a.created_at || '').slice(0,16).replace('T',' ')}
+            ${a.updated_at && a.updated_at !== a.created_at ? '· (edited)' : ''}
+          </div>
+        </div>
+        ${a.can_modify ? `
+        <div class="row-actions">
+          <button class="btn btn-sm" onclick="editActivity(${a.id}, this)" data-content="${encodeURIComponent(a.content)}">Edit</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteActivity(${a.id})">Del</button>
+        </div>` : ''}
+      </div>
+    </div>`).join('');
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+document.getElementById('addActivityBtn').onclick = () => {
+  editingActivityId = null;
+  document.getElementById('activityModalTitle').textContent = 'Add Activity';
+  document.getElementById('activityForm').reset();
+  document.getElementById('activityModal').classList.add('show');
+};
+window.editActivity = (id, btn) => {
+  editingActivityId = id;
+  document.getElementById('activityModalTitle').textContent = 'Edit Activity';
+  document.querySelector('#activityForm [name=content]').value =
+    decodeURIComponent(btn.dataset.content);
+  document.getElementById('activityModal').classList.add('show');
+};
+window.deleteActivity = async (id) => {
+  if (!confirm('Delete this activity?')) return;
+  const r = await fetch(`/api/misc-activities/${id}`, { method: 'DELETE' });
+  const j = await r.json();
+  if (j.error) { alert(j.error); return; }
+  loadActivities();
+};
+document.getElementById('activityClose').onclick =
+document.getElementById('activityCancel').onclick = () =>
+  document.getElementById('activityModal').classList.remove('show');
+
+document.getElementById('activityForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const content = e.target.content.value.trim();
+  if (!content) return;
+  const url = editingActivityId
+    ? `/api/misc-activities/${editingActivityId}`
+    : '/api/misc-activities';
+  const method = editingActivityId ? 'PUT' : 'POST';
+  const r = await fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  });
+  const j = await r.json();
+  if (j.error) { alert(j.error); return; }
+  document.getElementById('activityModal').classList.remove('show');
+  loadActivities();
+};
+
+// ---- Charts (mirrors analytics page) ----
+Chart.defaults.color = '#475569';
+Chart.defaults.borderColor = '#e2e8f0';
+Chart.defaults.font.family = 'Arial, Helvetica, sans-serif';
+
+async function loadCharts() {
+  const data = await fetch('/api/analytics-data').then(r => r.json());
+
+  // Faults by category — pie
+  new Chart(document.getElementById('catChart'), {
+    type: 'pie',
+    data: {
+      labels: data.faults_by_category.map(r => r.category || 'Uncategorized'),
+      datasets: [{
+        data: data.faults_by_category.map(r => r.c),
+        backgroundColor: ['#0891b2','#7c3aed','#d97706','#059669','#dc2626','#db2777','#0369a1'],
+      }],
+    },
+    options: { responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom' } } },
+  });
+
+  // Open faults by severity — doughnut
+  const sevMap = Object.fromEntries(data.open_faults_by_severity.map(r => [r.severity, r.c]));
+  new Chart(document.getElementById('sevChart'), {
+    type: 'doughnut',
+    data: {
+      labels: ['HIGH', 'MEDIUM', 'LOW'],
+      datasets: [{
+        data: [sevMap.HIGH || 0, sevMap.MEDIUM || 0, sevMap.LOW || 0],
+        backgroundColor: ['#dc2626', '#d97706', '#94a3b8'],
+      }],
+    },
+    options: { responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom' } } },
+  });
+
+  // Faults timeline — line
+  new Chart(document.getElementById('timeChart'), {
+    type: 'line',
+    data: {
+      labels: data.faults_timeline.map(r => r.d),
+      datasets: [{
+        label: 'Faults',
+        data: data.faults_timeline.map(r => r.c),
+        borderColor: '#0369a1',
+        backgroundColor: 'rgba(3,105,161,0.12)',
+        fill: true,
+        tension: 0.3,
+      }],
+    },
+    options: { responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } },
+  });
+}
+
+loadOutageData();
+loadActivities();
+loadCharts();
+</script>
+{% endblock %}

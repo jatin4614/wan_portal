@@ -1,0 +1,854 @@
+{% extends "base.html" %}
+{% block title %}Equipment | Vajr Comn State{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1 class="page-title">EQUIPMENT INVENTORY <small>// LIFECYCLE &amp; STATUS</small></h1>
+  <div class="page-meta" id="eqMeta">—</div>
+</div>
+
+<div class="topo-controls">
+  <div class="toggle-group">
+    <button class="toggle-btn active" data-tab="terminal">Terminal Equipment</button>
+    <button class="toggle-btn" data-tab="radio">Radio Equipment</button>
+    <button class="toggle-btn" data-tab="types">Equipment Types</button>
+  </div>
+  <button class="btn btn-primary" id="addBtn">＋ Add Entry</button>
+</div>
+
+<div class="filters">
+  <input type="text" id="searchInput" placeholder="Search…" />
+  <select id="formationFilter"><option value="">All Formations</option></select>
+  <select id="unitFilter"><option value="">All Units</option></select>
+  <select id="typeFilter"><option value="">All Types</option></select>
+  <select id="statusFilter">
+    <option value="">All Status</option>
+    <option value="OPERATIONAL">OPERATIONAL</option>
+    <option value="FAULTY">FAULTY</option>
+  </select>
+</div>
+
+<!-- Container that renders either flat table or grouped-by-formation cards -->
+<div id="equipBody"></div>
+
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="modalTitle">Add Entry</div>
+      <button class="close-btn" id="closeBtn">×</button>
+    </div>
+    <form id="entryForm">
+      <div class="form-grid" id="formFields"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+        <button type="button" class="btn" id="cancelBtn">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const SCHEMAS = {
+  terminal: {
+    table: 'terminal_equipment',
+    api: '/api/equipment',
+    label: 'Terminal Equipment',
+    columns: [
+      { f: 'equipment_id', label: 'Equipment ID' },
+      { f: 'location', label: 'Location', type: 'select-node' },
+      { f: 'eqpt_type', label: 'Type of Equipment', type: 'select-type' },
+      { f: 'year_purchased', label: 'Year Purchased', type: 'number' },
+      { f: 'status', label: 'Status', type: 'select', options: ['OPERATIONAL', 'FAULTY', 'EOL'] },
+      { f: 'last_checked_on', label: 'Last Checked On', type: 'date' },
+      { f: 'last_checked_by', label: 'Last Checked By' },
+      { f: 'remarks', label: 'Remarks', full: true },
+    ],
+  },
+  radio: {
+    table: 'radio_equipment',
+    api: '/api/radio',
+    label: 'Radio Equipment',
+    columns: [
+      { f: 'equipment_id', label: 'Equipment ID' },
+      { f: 'radio_type', label: 'Type', type: 'select', options: ['Combat Network Radio', 'Motorola', 'Mobile Comn', 'ISAT Phone'] },
+      { f: 'location', label: 'Location', type: 'select-node' },
+      { f: 'frequency', label: 'Frequency' },
+      { f: 'year_purchased', label: 'Year Purchased', type: 'number' },
+      { f: 'status', label: 'Status', type: 'select', options: ['OPERATIONAL', 'FAULTY', 'EOL'] },
+      { f: 'remarks', label: 'Remarks', full: true },
+    ],
+  },
+};
+
+let currentTab = 'terminal';
+let currentData = [];
+let editingId = null;
+const currentYear = new Date().getFullYear();
+
+// Cache of node-name -> {formation, unit, node_type, region} for grouping/filtering
+let nodeMap = {};
+async function loadNodeMap() {
+  const ns = await fetch('/api/nodes').then(r => r.json());
+  nodeMap = {};
+  ns.forEach(n => { nodeMap[n.name] = n; });
+}
+
+async function loadTable() {
+  if (currentTab === 'types') {
+    currentData = await fetch('/api/equipment-types').then(r => r.json());
+    renderTypesTable();
+    return;
+  }
+  await loadNodeMap();
+  currentData = await fetch(SCHEMAS[currentTab].api).then(r => r.json());
+
+  // Populate type filter
+  const types = [...new Set(currentData.map(r => r.eqpt_type || r.radio_type).filter(Boolean))].sort();
+  const tf = document.getElementById('typeFilter');
+  const oldT = tf.value;
+  tf.innerHTML = '<option value="">All Types</option>' + types.map(t => `<option ${t===oldT?'selected':''}>${t}</option>`).join('');
+
+  // Populate formation/unit filters from the nodes referenced by current equipment
+  const formations = new Set();
+  const units = new Set();
+  currentData.forEach(r => {
+    const n = nodeMap[r.location];
+    if (n) {
+      if (n.formation) formations.add(n.formation);
+      if (n.unit) units.add(n.unit);
+    }
+  });
+  const ff = document.getElementById('formationFilter');
+  const uf = document.getElementById('unitFilter');
+  const oldF = ff.value, oldU = uf.value;
+  ff.innerHTML = '<option value="">All Formations</option>' + [...formations].sort().map(f => `<option ${f===oldF?'selected':''}>${f}</option>`).join('');
+  uf.innerHTML = '<option value="">All Units</option>' + [...units].sort().map(u => `<option ${u===oldU?'selected':''}>${u}</option>`).join('');
+
+  renderTable();
+}
+
+function renderTypesTable() {
+  const search = document.getElementById('searchInput').value.toLowerCase();
+  const filtered = currentData.filter(r => !search ||
+    Object.values(r).some(v => String(v).toLowerCase().includes(search)));
+
+  let html = `<div class="card"><div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Name</th><th>Description</th><th>Port Template</th><th>Total Ports</th><th></th></tr></thead>
+    <tbody>`;
+  if (!filtered.length) {
+    html += `<tr><td colspan="5" class="empty">No equipment types defined</td></tr>`;
+  } else {
+    html += filtered.map(t => {
+      const tmpl = Array.isArray(t.port_template) ? t.port_template : [];
+      const totalPorts = tmpl.reduce((s, p) => s + (parseInt(p.count) || 0), 0);
+      const summary = tmpl.map(p => `${p.count}× ${p.port_type} ${p.bandwidth}`).join(' · ') || '—';
+      return `<tr>
+        <td class="mono"><strong>${t.name}</strong></td>
+        <td>${t.description || '—'}</td>
+        <td style="font-size:11px;color:var(--text-dim);">${summary}</td>
+        <td><strong>${totalPorts}</strong></td>
+        <td><div class="row-actions">
+          <button class="btn btn-sm" onclick="editType(${t.id})">Edit</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteType(${t.id})">Del</button>
+        </div></td>
+      </tr>`;
+    }).join('');
+  }
+  html += '</tbody></table></div></div>';
+  document.getElementById('equipBody').innerHTML = html;
+  document.getElementById('eqMeta').textContent = `${filtered.length} equipment types`;
+}
+
+function renderTable() {
+  const search = document.getElementById('searchInput').value.toLowerCase();
+  const statusF = document.getElementById('statusFilter').value;
+  const typeF = document.getElementById('typeFilter').value;
+  const formF = document.getElementById('formationFilter').value;
+  const unitF = document.getElementById('unitFilter').value;
+
+  const filtered = currentData.filter(r => {
+    if (statusF && r.status !== statusF) return false;
+    if (typeF && r.eqpt_type !== typeF && r.radio_type !== typeF) return false;
+    const n = nodeMap[r.location];
+    if (formF && (!n || n.formation !== formF)) return false;
+    if (unitF && (!n || n.unit !== unitF)) return false;
+    if (!search) return true;
+    return Object.values(r).some(v => String(v).toLowerCase().includes(search));
+  });
+
+  // For terminal tab, group by formation. Radio tab stays a single flat table.
+  if (currentTab === 'terminal') {
+    renderTerminalGrouped(filtered);
+  } else {
+    renderFlatTable(filtered);
+  }
+  document.getElementById('eqMeta').textContent = `${filtered.length} of ${currentData.length} units`;
+}
+
+function rowHtmlFor(row, schema) {
+  const cells = schema.columns.map(c => {
+    let val = row[c.f] ?? '—';
+    if (c.f === 'status') val = `<span class="badge badge-${String(val).toLowerCase()}">${val}</span>`;
+    else if (c.f === 'equipment_id' && currentTab === 'terminal') {
+      val = `<span class="equipid-clickable mono" onclick="showEquipDetail(${row.id})">${val}</span>`;
+    }
+    else if (c.f === 'equipment_id') val = `<span class="mono">${val}</span>`;
+    else if (c.f === 'last_checked_on' && val !== '—') val = String(val).slice(0, 10);
+    return `<td class="${c.f==='equipment_id' ? 'mono' : ''}">${val}</td>`;
+  }).join('');
+  const age = row.year_purchased ? (currentYear - row.year_purchased) : '—';
+  const ageColor = age >= 7 ? 'var(--bad)' : age >= 5 ? 'var(--warn)' : 'var(--good)';
+  const ageCell = age === '—' ? '—' : `<span style="color:${ageColor};">${age}y</span>`;
+  return `<tr>
+    ${cells}
+    <td>${ageCell}</td>
+    <td><div class="row-actions">
+      <button class="btn btn-sm" onclick="editRow(${row.id})">Edit</button>
+      <button class="btn btn-sm btn-danger" onclick="deleteRow(${row.id})">Del</button>
+    </div></td>
+  </tr>`;
+}
+
+function renderFlatTable(filtered) {
+  const schema = SCHEMAS[currentTab];
+  let html = `<div class="card"><div class="tbl-wrap"><table class="tbl">
+    <thead><tr>${schema.columns.map(c => `<th>${c.label}</th>`).join('')}<th>Age</th><th></th></tr></thead>
+    <tbody>`;
+  if (!filtered.length) {
+    html += `<tr><td colspan="${schema.columns.length + 2}" class="empty">No entries</td></tr>`;
+  } else {
+    html += filtered.map(r => rowHtmlFor(r, schema)).join('');
+  }
+  html += '</tbody></table></div></div>';
+  document.getElementById('equipBody').innerHTML = html;
+}
+
+function renderTerminalGrouped(filtered) {
+  const schema = SCHEMAS.terminal;
+
+  // Group by formation (fallback "(no formation)")
+  const groups = {};
+  filtered.forEach(r => {
+    const n = nodeMap[r.location];
+    const formation = (n && n.formation) || '(no formation)';
+    (groups[formation] = groups[formation] || []).push(r);
+  });
+
+  const formationNames = Object.keys(groups).sort((a, b) => {
+    if (a === '(no formation)') return 1;
+    if (b === '(no formation)') return -1;
+    return a.localeCompare(b);
+  });
+
+  if (!filtered.length) {
+    document.getElementById('equipBody').innerHTML =
+      `<div class="card"><div class="empty">No equipment matches the filters. Try clearing them or seeding hierarchy data from Import / Export.</div></div>`;
+    return;
+  }
+
+  let html = '';
+  formationNames.forEach(formation => {
+    const rows = groups[formation];
+    const downCount = rows.filter(r => r.status !== 'OPERATIONAL').length;
+    const tone = downCount > 0 ? 'bad' : 'good';
+    html += `
+      <div class="card" style="margin-bottom:14px;">
+        <div class="card-head">
+          <div class="card-title">
+            <span class="card-title-icon" style="background:var(--${tone === 'bad' ? 'bad' : 'good'}-bg);color:var(--${tone === 'bad' ? 'bad' : 'good'});">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
+            </span>
+            ${formation}
+          </div>
+          <div class="card-sub">${rows.length} units${downCount > 0 ? ` · <span style="color:var(--bad);font-weight:700;">${downCount} need attention</span>` : ''}</div>
+        </div>
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr>${schema.columns.map(c => `<th>${c.label}</th>`).join('')}<th>Age</th><th></th></tr></thead>
+          <tbody>${rows.map(r => rowHtmlFor(r, schema)).join('')}</tbody>
+        </table></div>
+      </div>`;
+  });
+
+  document.getElementById('equipBody').innerHTML = html;
+}
+
+// Cached node list for dropdowns
+let nodeOptions = [];
+async function loadNodeOptions() {
+  if (nodeOptions.length === 0) {
+    nodeOptions = (await fetch('/api/nodes').then(r => r.json())).map(n => n.name).sort();
+  }
+  return nodeOptions;
+}
+
+// Cached equipment-type list for dropdowns
+let typeOptions = [];
+async function loadTypeOptions(force) {
+  if (force || typeOptions.length === 0) {
+    typeOptions = (await fetch('/api/equipment-types').then(r => r.json())).map(t => t.name).sort();
+  }
+  return typeOptions;
+}
+
+function buildForm(data = {}) {
+  const schema = SCHEMAS[currentTab];
+  document.getElementById('formFields').innerHTML = schema.columns.map(c => {
+    let input;
+    if (c.type === 'select') {
+      input = `<select name="${c.f}">${c.options.map(o => `<option ${data[c.f]===o?'selected':''}>${o}</option>`).join('')}</select>`;
+    } else if (c.type === 'select-node') {
+      input = `<select name="${c.f}">
+        <option value="">— select node —</option>
+        ${nodeOptions.map(n => `<option ${data[c.f]===n?'selected':''}>${n}</option>`).join('')}
+      </select>`;
+    } else if (c.type === 'select-type') {
+      input = `<select name="${c.f}">
+        <option value="">— select equipment type —</option>
+        ${typeOptions.map(t => `<option ${data[c.f]===t?'selected':''}>${t}</option>`).join('')}
+      </select>`;
+    } else if (c.type === 'number') {
+      input = `<input type="number" name="${c.f}" value="${data[c.f] ?? ''}">`;
+    } else if (c.type === 'date') {
+      const v = data[c.f] ? String(data[c.f]).slice(0, 10) : '';
+      input = `<input type="date" name="${c.f}" value="${v}">`;
+    } else {
+      input = `<input type="text" name="${c.f}" value="${data[c.f] ?? ''}">`;
+    }
+    return `<div class="${c.full ? 'full' : ''}"><label>${c.label}</label>${input}</div>`;
+  }).join('');
+}
+
+window.editRow = async id => {
+  const row = currentData.find(r => r.id === id);
+  if (!row) return;
+  editingId = id;
+  await Promise.all([loadNodeOptions(), loadTypeOptions()]);
+  document.getElementById('modalTitle').textContent = 'Edit ' + SCHEMAS[currentTab].label;
+  buildForm(row);
+  document.getElementById('modalBg').classList.add('show');
+};
+
+window.deleteRow = async id => {
+  if (!confirm('Delete this entry?')) return;
+  await fetch(`/api/${SCHEMAS[currentTab].table}/${id}`, { method: 'DELETE' });
+  loadTable();
+};
+
+document.getElementById('addBtn').onclick = async () => {
+  if (currentTab === 'types') {
+    showTypeForm({});
+    return;
+  }
+  editingId = null;
+  await Promise.all([loadNodeOptions(), loadTypeOptions()]);
+  document.getElementById('modalTitle').textContent = 'Add ' + SCHEMAS[currentTab].label;
+  buildForm({ status: 'OPERATIONAL' });
+  document.getElementById('modalBg').classList.add('show');
+};
+
+document.getElementById('closeBtn').onclick = document.getElementById('cancelBtn').onclick = () => {
+  document.getElementById('modalBg').classList.remove('show');
+};
+
+document.getElementById('entryForm').onsubmit = async e => {
+  e.preventDefault();
+  const schema = SCHEMAS[currentTab];
+  const fd = new FormData(e.target);
+  const data = {};
+  schema.columns.forEach(c => {
+    let v = fd.get(c.f);
+    if (v === '' || v == null) v = null;
+    else if (c.type === 'number') v = parseFloat(v);
+    data[c.f] = v;
+  });
+  const url = editingId ? `/api/${schema.table}/${editingId}` : `/api/${schema.table}`;
+  const resp = await fetch(url, {
+    method: editingId ? 'PUT' : 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  const result = await resp.json();
+  if (result.error) { alert('Error: ' + result.error); return; }
+  document.getElementById('modalBg').classList.remove('show');
+  loadTable();
+};
+
+document.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-tab]').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  currentTab = b.dataset.tab;
+  // Hide status/type/formation/unit filters on Equipment Types tab
+  const isTypes = (currentTab === 'types');
+  document.getElementById('statusFilter').style.display = isTypes ? 'none' : '';
+  document.getElementById('typeFilter').style.display = isTypes ? 'none' : '';
+  document.getElementById('formationFilter').style.display = isTypes ? 'none' : '';
+  document.getElementById('unitFilter').style.display = isTypes ? 'none' : '';
+  loadTable();
+}));
+
+document.getElementById('searchInput').oninput = renderTable;
+document.getElementById('statusFilter').onchange = renderTable;
+document.getElementById('typeFilter').onchange = renderTable;
+document.getElementById('formationFilter').onchange = renderTable;
+document.getElementById('unitFilter').onchange = renderTable;
+
+// =============================================================================
+// Equipment detail: clicking an Equipment ID opens modal showing all ports,
+// their bandwidth, type, status, and connected OFC link/fiber if any.
+// =============================================================================
+let currentEquipDetail = null;
+
+window.showEquipDetail = async function(eqId) {
+  const data = await fetch(`/api/equipment-detail/${eqId}`).then(r => r.json());
+  currentEquipDetail = data;
+  let modal = document.getElementById('equipDetailModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'equipDetailModal';
+    modal.className = 'modal-bg';
+    modal.innerHTML = `
+      <div class="modal modal-wide">
+        <div class="modal-head">
+          <div class="modal-title" id="edTitle">Equipment Detail</div>
+          <button class="close-btn" id="edClose">×</button>
+        </div>
+        <div id="edBody"></div>
+      </div>`;
+    document.body.appendChild(modal);
+    modal.querySelector('#edClose').onclick = () => modal.classList.remove('show');
+    modal.onclick = (e) => { if (e.target === modal) modal.classList.remove('show'); };
+  }
+  renderEquipDetail();
+  modal.classList.add('show');
+};
+
+function renderEquipDetail() {
+  const d = currentEquipDetail;
+  document.getElementById('edTitle').textContent = `${d.equipment_id} — ${d.eqpt_type} @ ${d.location}`;
+
+  const total = d.ports.length;
+  const active = d.ports.filter(p => p.status === 'ACTIVE').length;
+  const down = d.ports.filter(p => p.status === 'DOWN').length;
+  const unused = d.ports.filter(p => p.status === 'UNUSED').length;
+
+  let html = `
+    <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px;font-size:13px;">
+      <div><strong>Status:</strong> <span class="badge badge-${d.status.toLowerCase()}">${d.status}</span></div>
+      <div><strong>Year:</strong> ${d.year_purchased || '—'}</div>
+      <div><strong>Total ports:</strong> ${total}</div>
+      <div><strong style="color:var(--good)">Active:</strong> ${active}</div>
+      <div><strong style="color:var(--bad)">Down:</strong> ${down}</div>
+      <div><strong style="color:var(--text-faint)">Unused:</strong> ${unused}</div>
+    </div>
+
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <div style="font-size:12px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em;">Ports</div>
+      <button class="btn btn-sm btn-primary" onclick="addPort(${d.id})">＋ Add Port</button>
+    </div>
+
+    <div style="display:grid;grid-template-columns:80px 90px 90px 90px 1fr auto;gap:10px;padding:6px 12px;font-size:11px;font-weight:700;color:var(--text-faint);text-transform:uppercase;letter-spacing:0.05em;">
+      <div>Port</div><div>Type</div><div>Bandwidth</div><div>Status</div><div>Connected</div><div></div>
+    </div>
+    <div class="port-list">
+      ${d.ports.map(p => {
+        const fiber = p.connected_fiber;
+        const conn = fiber
+          ? `<span class="linkid-clickable" onclick="window.location.href='/links?focus=${fiber.link_id}'">${fiber.link_id}</span> · R${fiber.ribbon_number}/F${fiber.fiber_number}`
+          : '<span style="color:var(--text-faint)">—</span>';
+        return `
+          <div class="port-row port-${p.status}" style="grid-template-columns:80px 90px 90px 90px 1fr auto;">
+            <div class="port-label-cell">${p.port_label}</div>
+            <div>${p.port_type || '—'}</div>
+            <div class="port-bw-cell">${p.bandwidth || '—'}</div>
+            <div><span class="badge badge-${p.status.toLowerCase()}">${p.status}</span></div>
+            <div class="port-conn-cell">${conn}</div>
+            <div class="row-actions">
+              ${fiber
+                ? `<button class="btn btn-sm" onclick="disconnectPort(${p.id}, ${fiber.fiber_id})" title="Disconnect fiber">⌀</button>`
+                : `<button class="btn btn-sm btn-primary" onclick="connectPortToFiber(${p.id})" title="Connect to fiber">↔</button>`}
+              <button class="btn btn-sm" onclick="editPort(${p.id})" title="Edit port">✎</button>
+              <button class="btn btn-sm btn-danger" onclick="deletePort(${p.id})" title="Delete port">×</button>
+            </div>
+          </div>`;
+      }).join('')}
+    </div>
+  `;
+  document.getElementById('edBody').innerHTML = html;
+}
+
+// ---------- Port edit/add/delete ----------
+window.editPort = async function(portId) {
+  const port = currentEquipDetail.ports.find(p => p.id === portId);
+  if (!port) return;
+  showPortForm(port, false);
+};
+
+window.addPort = function(equipId) {
+  showPortForm({ terminal_equipment_id: equipId, port_label: '', port_type: 'Optical', bandwidth: '1 Gbps', status: 'UNUSED', remarks: '' }, true);
+};
+
+function showPortForm(port, isNew) {
+  let modal = document.getElementById('portFormModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'portFormModal';
+    modal.className = 'modal-bg';
+    document.body.appendChild(modal);
+  }
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-head">
+        <div class="modal-title">${isNew ? 'Add Port' : 'Edit Port ' + port.port_label}</div>
+        <button class="close-btn" onclick="document.getElementById('portFormModal').classList.remove('show')">×</button>
+      </div>
+      <form id="portForm">
+        <div class="form-grid">
+          <div>
+            <label>Port Label</label>
+            <input type="text" name="port_label" value="${port.port_label || ''}" placeholder="e.g. Eth-1, GE-0/1, E1-2" required>
+          </div>
+          <div>
+            <label>Port Type</label>
+            <select name="port_type">
+              <option ${port.port_type==='Optical'?'selected':''}>Optical</option>
+              <option ${port.port_type==='Electronic'?'selected':''}>Electronic</option>
+            </select>
+          </div>
+          <div>
+            <label>Bandwidth</label>
+            <select name="bandwidth">
+              ${['10 Mbps','100 Mbps','1 Gbps','2.5 Gbps','10 Gbps','40 Gbps','100 Gbps','2 Mbps','STM-1','STM-4','STM-16'].map(b =>
+                `<option ${port.bandwidth===b?'selected':''}>${b}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label>Status</label>
+            <select name="status">
+              <option ${port.status==='UNUSED'?'selected':''}>UNUSED</option>
+              <option ${port.status==='ACTIVE'?'selected':''}>ACTIVE</option>
+              <option ${port.status==='DOWN'?'selected':''}>DOWN</option>
+            </select>
+          </div>
+          <div class="full">
+            <label>Remarks</label>
+            <input type="text" name="remarks" value="${port.remarks || ''}">
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;">
+          <button type="button" class="btn" onclick="document.getElementById('portFormModal').classList.remove('show')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>`;
+  modal.classList.add('show');
+
+  document.getElementById('portForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const body = Object.fromEntries(fd.entries());
+    let resp;
+    if (isNew) {
+      body.terminal_equipment_id = port.terminal_equipment_id;
+      resp = await fetch('/api/equipment-port', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    } else {
+      resp = await fetch(`/api/equipment-port/${port.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    }
+    const j = await resp.json();
+    if (j.error) { alert(j.error); return; }
+    document.getElementById('portFormModal').classList.remove('show');
+    // Refresh
+    showEquipDetail(currentEquipDetail.id);
+  };
+}
+
+window.deletePort = async function(portId) {
+  if (!confirm('Delete this port? This will also disconnect any fiber attached to it.')) return;
+  await fetch(`/api/equipment-port/${portId}`, { method: 'DELETE' });
+  showEquipDetail(currentEquipDetail.id);
+};
+
+// ---------- Port → Fiber connection flow ----------
+window.connectPortToFiber = async function(portId) {
+  const eqLocation = currentEquipDetail.location;
+  // Fetch all OFC links touching this node
+  const ofcs = await fetch(`/api/ofcs-from-node/${encodeURIComponent(eqLocation)}`).then(r => r.json());
+  if (ofcs.length === 0) {
+    alert(`No OFC links connect to ${eqLocation}.`);
+    return;
+  }
+
+  let modal = document.getElementById('connectFiberModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'connectFiberModal';
+    modal.className = 'modal-bg';
+    document.body.appendChild(modal);
+  }
+
+  // Build OFC -> ribbons -> fiber selector. We list FREE fibers + show which ribbon they belong to.
+  const ofcOptions = ofcs.map(o => `<option value="${o.id}">${o.link_id} — ${o.from_node} ↔ ${o.to_node} (${o.status})</option>`).join('');
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-head">
+        <div class="modal-title">Connect Port to Fiber</div>
+        <button class="close-btn" onclick="document.getElementById('connectFiberModal').classList.remove('show')">×</button>
+      </div>
+      <div style="margin-bottom:14px;font-size:12px;color:var(--text-dim);">
+        Connecting <strong>${currentEquipDetail.equipment_id} : ${currentEquipDetail.ports.find(p=>p.id===portId).port_label}</strong>
+        at <strong>${eqLocation}</strong>
+      </div>
+      <div class="form-grid">
+        <div class="full">
+          <label>OFC Link</label>
+          <select id="cfOfc"><option value="">— select OFC —</option>${ofcOptions}</select>
+        </div>
+        <div>
+          <label>Ribbon</label>
+          <select id="cfRibbon" disabled><option>—</option></select>
+        </div>
+        <div>
+          <label>Fiber</label>
+          <select id="cfFiber" disabled><option>—</option></select>
+        </div>
+      </div>
+      <div id="cfHint" style="margin-top:10px;font-size:12px;color:var(--text-dim);"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;">
+        <button type="button" class="btn" onclick="document.getElementById('connectFiberModal').classList.remove('show')">Cancel</button>
+        <button type="button" class="btn btn-primary" id="cfSave" disabled>Connect</button>
+      </div>
+    </div>`;
+  modal.classList.add('show');
+
+  // Cascading dropdowns
+  const ofcSel = document.getElementById('cfOfc');
+  const ribSel = document.getElementById('cfRibbon');
+  const fibSel = document.getElementById('cfFiber');
+  const saveBtn = document.getElementById('cfSave');
+  const hint = document.getElementById('cfHint');
+
+  ofcSel.onchange = () => {
+    const o = ofcs.find(x => x.id === parseInt(ofcSel.value));
+    ribSel.innerHTML = '<option value="">— select ribbon —</option>' + (o?.ribbons || []).map(r =>
+      `<option value="${r.id}">Ribbon ${r.ribbon_number} (${r.fiber_count} fibers)</option>`).join('');
+    ribSel.disabled = !o;
+    fibSel.innerHTML = '<option>—</option>';
+    fibSel.disabled = true;
+    saveBtn.disabled = true;
+    // Update hint: which side of the OFC is this port on?
+    if (o) {
+      const side = (o.from_node === eqLocation) ? 'FROM' : 'TO';
+      hint.textContent = `This port is on the ${side} side of ${o.link_id}. The fiber's ${side === 'FROM' ? 'from_port' : 'to_port'} will be set.`;
+    } else hint.textContent = '';
+  };
+  ribSel.onchange = () => {
+    const o = ofcs.find(x => x.id === parseInt(ofcSel.value));
+    const rb = (o?.ribbons || []).find(r => r.id === parseInt(ribSel.value));
+    fibSel.innerHTML = '<option value="">— select fiber —</option>' + (rb?.fibers || []).map(f => {
+      const dis = (f.status === 'CONNECTED-ACTIVE' || f.status === 'CONNECTED-DOWN') ? 'disabled' : '';
+      const lbl = f.status === 'FREE' ? '' : ` [${f.status}]`;
+      return `<option value="${f.id}" ${dis}>Fiber ${f.fiber_number}${lbl}</option>`;
+    }).join('');
+    fibSel.disabled = !rb;
+    saveBtn.disabled = true;
+  };
+  fibSel.onchange = () => { saveBtn.disabled = !fibSel.value; };
+
+  saveBtn.onclick = async () => {
+    const ofcId = parseInt(ofcSel.value);
+    const o = ofcs.find(x => x.id === ofcId);
+    const fiberId = parseInt(fibSel.value);
+    // Find the fiber object to know its current state
+    let fiberObj = null;
+    for (const r of o.ribbons) {
+      fiberObj = r.fibers.find(f => f.id === fiberId);
+      if (fiberObj) break;
+    }
+    // Determine which side this port belongs to
+    const side = (o.from_node === eqLocation) ? 'from_port_id' : 'to_port_id';
+    const body = {
+      from_port_id: fiberObj.from_port_id,
+      to_port_id: fiberObj.to_port_id,
+      status: fiberObj.status,
+    };
+    body[side] = portId;
+    // If both ends now connected, status -> CONNECTED-ACTIVE
+    if (body.from_port_id && body.to_port_id) {
+      body.status = 'CONNECTED-ACTIVE';
+    } else if (fiberObj.status === 'FREE') {
+      body.status = 'RESERVED';
+    }
+    const r = await fetch(`/api/fiber/${fiberId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const j = await r.json();
+    if (j.error) { alert(j.error); return; }
+    document.getElementById('connectFiberModal').classList.remove('show');
+    showEquipDetail(currentEquipDetail.id);
+  };
+};
+
+window.disconnectPort = async function(portId, fiberId) {
+  if (!confirm('Disconnect this fiber from the port?')) return;
+  // Fetch fiber to see current state
+  const ofcs = await fetch(`/api/ofcs-from-node/${encodeURIComponent(currentEquipDetail.location)}`).then(r => r.json());
+  let fiberObj = null;
+  for (const o of ofcs) {
+    for (const r of o.ribbons) {
+      fiberObj = r.fibers.find(f => f.id === fiberId);
+      if (fiberObj) break;
+    }
+    if (fiberObj) break;
+  }
+  if (!fiberObj) return;
+  const body = {
+    from_port_id: fiberObj.from_port_id === portId ? null : fiberObj.from_port_id,
+    to_port_id: fiberObj.to_port_id === portId ? null : fiberObj.to_port_id,
+  };
+  // If both ends now empty, FREE; if one end remains, RESERVED
+  body.status = (body.from_port_id || body.to_port_id) ? 'RESERVED' : 'FREE';
+  await fetch(`/api/fiber/${fiberId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  showEquipDetail(currentEquipDetail.id);
+};
+
+// =============================================================================
+// Equipment Types - CRUD with port template editor
+// =============================================================================
+window.editType = async (id) => {
+  const t = currentData.find(x => x.id === id);
+  if (!t) return;
+  showTypeForm(t);
+};
+
+window.deleteType = async (id) => {
+  if (!confirm('Delete this equipment type? Existing terminal equipment using this type will not be affected.')) return;
+  await fetch(`/api/equipment-types/${id}`, { method: 'DELETE' });
+  // Invalidate cached type options so the dropdown refreshes next time
+  typeOptions = [];
+  loadTable();
+};
+
+function showTypeForm(t) {
+  const isNew = !t.id;
+  let modal = document.getElementById('typeFormModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'typeFormModal';
+    modal.className = 'modal-bg';
+    document.body.appendChild(modal);
+  }
+  const ports = Array.isArray(t.port_template) ? [...t.port_template] : [];
+
+  function render() {
+    modal.innerHTML = `
+      <div class="modal modal-wide">
+        <div class="modal-head">
+          <div class="modal-title">${isNew ? 'Add Equipment Type' : 'Edit ' + t.name}</div>
+          <button class="close-btn" onclick="document.getElementById('typeFormModal').classList.remove('show')">×</button>
+        </div>
+        <div class="form-grid">
+          <div>
+            <label>Type Name</label>
+            <input type="text" id="tfName" value="${t.name || ''}" placeholder="e.g. Cisco ASR-9000" required>
+          </div>
+          <div>
+            <label>Description</label>
+            <input type="text" id="tfDesc" value="${t.description || ''}" placeholder="brief description">
+          </div>
+          <div class="full">
+            <label>Port Template (rows define ports auto-created when this type is used)</label>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 80px auto;gap:6px;font-size:11px;color:var(--text-faint);font-weight:700;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;padding:0 4px;">
+              <div>Label Prefix</div><div>Port Type</div><div>Bandwidth</div><div>Count</div><div></div>
+            </div>
+            <div id="tfPortRows"></div>
+            <button type="button" class="btn btn-sm" onclick="window._addPortRow()" style="margin-top:8px;">＋ Add Port Spec</button>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;">
+          <button type="button" class="btn" onclick="document.getElementById('typeFormModal').classList.remove('show')">Cancel</button>
+          <button type="button" class="btn btn-primary" id="tfSave">Save</button>
+        </div>
+      </div>`;
+    renderPortRows();
+    modal.classList.add('show');
+    document.getElementById('tfSave').onclick = save;
+  }
+
+  function renderPortRows() {
+    const wrap = document.getElementById('tfPortRows');
+    wrap.innerHTML = ports.map((p, i) => `
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 80px auto;gap:6px;margin-bottom:6px;">
+        <input type="text" value="${p.label_prefix || ''}" placeholder="Eth-" data-pi="${i}" data-pf="label_prefix">
+        <select data-pi="${i}" data-pf="port_type">
+          <option ${p.port_type==='Optical'?'selected':''}>Optical</option>
+          <option ${p.port_type==='Electronic'?'selected':''}>Electronic</option>
+        </select>
+        <select data-pi="${i}" data-pf="bandwidth">
+          ${['10 Mbps','100 Mbps','1 Gbps','2.5 Gbps','10 Gbps','40 Gbps','100 Gbps','2 Mbps','STM-1','STM-4','STM-16','Voice'].map(b =>
+            `<option ${p.bandwidth===b?'selected':''}>${b}</option>`).join('')}
+        </select>
+        <input type="number" min="0" value="${p.count || 0}" data-pi="${i}" data-pf="count">
+        <button type="button" class="btn btn-sm btn-danger" onclick="window._delPortRow(${i})">×</button>
+      </div>`).join('');
+    // Wire field change handlers
+    wrap.querySelectorAll('[data-pi]').forEach(el => {
+      el.onchange = el.oninput = () => {
+        const i = parseInt(el.dataset.pi);
+        const f = el.dataset.pf;
+        ports[i][f] = (f === 'count') ? (parseInt(el.value) || 0) : el.value;
+      };
+    });
+  }
+
+  window._addPortRow = () => {
+    ports.push({ label_prefix: 'Port-', port_type: 'Optical', bandwidth: '1 Gbps', count: 1 });
+    renderPortRows();
+  };
+  window._delPortRow = (i) => {
+    ports.splice(i, 1);
+    renderPortRows();
+  };
+
+  async function save() {
+    const body = {
+      name: document.getElementById('tfName').value.trim(),
+      description: document.getElementById('tfDesc').value,
+      port_template: ports,
+    };
+    if (!body.name) { alert('Name required'); return; }
+    const url = isNew ? '/api/equipment-types' : `/api/equipment-types/${t.id}`;
+    const method = isNew ? 'POST' : 'PUT';
+    const r = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const j = await r.json();
+    if (j.error) { alert(j.error); return; }
+    document.getElementById('typeFormModal').classList.remove('show');
+    typeOptions = []; // invalidate dropdown cache
+    loadTable();
+  }
+
+  render();
+}
+
+loadTable();
+</script>
+{% endblock %}

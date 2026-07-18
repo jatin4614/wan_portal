@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block title %}Analytics | Vajr Comn State{% endblock %}
+
+{% block head_extra %}
+<script src="/static/vendor/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1 class="page-title">ANALYTICS <small>// CAPACITY · LIFECYCLE · TRENDS</small></h1>
+  <div class="page-meta" id="aMeta">—</div>
+</div>
+
+<div class="grid-3">
+  <div class="card">
+    <div class="card-head"><div class="card-title">Faults by Category</div></div>
+    <div class="chart-wrap"><canvas id="catChart"></canvas></div>
+  </div>
+  <div class="card">
+    <div class="card-head"><div class="card-title">Open Faults by Severity</div></div>
+    <div class="chart-wrap"><canvas id="sevChart"></canvas></div>
+  </div>
+  <div class="card">
+    <div class="card-head"><div class="card-title">MTTR Summary</div></div>
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:280px;">
+      <div style="font-family:var(--font-display);font-size:48px;color:var(--accent);" id="mttrBig">—</div>
+      <div style="color:var(--text-faint);margin-top:8px;font-family:var(--font-display);">HOURS · MEAN TIME TO REPAIR</div>
+      <div style="margin-top:16px;color:var(--text-dim);" id="mttrSub">—</div>
+    </div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-head"><div class="card-title">Faults Timeline (last 30 days)</div></div>
+    <div class="chart-wrap tall"><canvas id="timeChart"></canvas></div>
+  </div>
+  <div class="card">
+    <div class="card-head"><div class="card-title">OFC Loss vs Margin</div></div>
+    <div class="chart-wrap tall"><canvas id="lossChart"></canvas></div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-head"><div class="card-title">Equipment by Year of Purchase</div></div>
+    <div class="chart-wrap"><canvas id="eqYearChart"></canvas></div>
+  </div>
+  <div class="card">
+    <div class="card-head"><div class="card-title">OFC by Year Laid</div></div>
+    <div class="chart-wrap"><canvas id="ofcYearChart"></canvas></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+Chart.defaults.color = '#8a99b0';
+Chart.defaults.borderColor = '#1f2937';
+Chart.defaults.font.family = 'JetBrains Mono';
+
+(async function() {
+  const data = await fetch('/api/analytics-data').then(r => r.json());
+  document.getElementById('aMeta').textContent = `Updated ${new Date().toLocaleTimeString('en-GB')}`;
+
+  // Faults by category
+  new Chart(document.getElementById('catChart'), {
+    type: 'doughnut',
+    data: {
+      labels: data.faults_by_category.map(r => r.category || 'Unknown'),
+      datasets: [{
+        data: data.faults_by_category.map(r => r.c),
+        backgroundColor: ['#00d9ff', '#fbbf24', '#a855f7', '#10b981', '#ef4444', '#8a99b0'],
+        borderWidth: 2,
+        borderColor: '#0f141c',
+      }],
+    },
+    options: { plugins: { legend: { position: 'bottom', labels: { padding: 12 } } } },
+  });
+
+  // Severity bars
+  const sevOrder = ['HIGH', 'MEDIUM', 'LOW'];
+  const sevMap = Object.fromEntries(data.open_faults_by_severity.map(r => [r.severity, r.c]));
+  new Chart(document.getElementById('sevChart'), {
+    type: 'bar',
+    data: {
+      labels: sevOrder,
+      datasets: [{
+        data: sevOrder.map(s => sevMap[s] || 0),
+        backgroundColor: ['#ef4444', '#f59e0b', '#8a99b0'],
+        borderRadius: 4,
+      }],
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, ticks: { stepSize: 1, precision: 0 } } },
+    },
+  });
+
+  // MTTR
+  document.getElementById('mttrBig').textContent = data.mttr.mttr_hours;
+  document.getElementById('mttrSub').textContent = `Across ${data.mttr.resolved_count} resolved faults`;
+
+  // Timeline
+  new Chart(document.getElementById('timeChart'), {
+    type: 'line',
+    data: {
+      labels: data.faults_timeline.map(r => r.d),
+      datasets: [{
+        label: 'Faults reported',
+        data: data.faults_timeline.map(r => r.c),
+        borderColor: '#00d9ff',
+        backgroundColor: 'rgba(0, 217, 255, 0.1)',
+        fill: true,
+        tension: 0.3,
+        pointBackgroundColor: '#00d9ff',
+      }],
+    },
+    options: { scales: { y: { beginAtZero: true, ticks: { stepSize: 1, precision: 0 } } } },
+  });
+
+  // Loss vs margin scatter
+  const ofcLoss = data.ofc_loss_margin;
+  const colorByStatus = s => s === 'UP' ? '#10b981' : s === 'DEGRADED' ? '#f59e0b' : '#ef4444';
+  new Chart(document.getElementById('lossChart'), {
+    type: 'scatter',
+    data: {
+      datasets: [{
+        label: 'OFC Links',
+        data: ofcLoss.map(r => ({ x: r.loss_db, y: r.margin_db, label: r.link_id })),
+        backgroundColor: ofcLoss.map(r => colorByStatus(r.status)),
+        pointRadius: 6,
+        pointHoverRadius: 9,
+      }],
+    },
+    options: {
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => `${ctx.raw.label}: loss=${ctx.raw.x}dB, margin=${ctx.raw.y}dB`,
+          },
+        },
+      },
+      scales: {
+        x: { title: { display: true, text: 'Loss (dB/km)' } },
+        y: { title: { display: true, text: 'Margin (dB)' }, beginAtZero: true },
+      },
+    },
+  });
+
+  // Equipment age
+  new Chart(document.getElementById('eqYearChart'), {
+    type: 'bar',
+    data: {
+      labels: data.equipment_by_year.map(r => r.year_purchased || 'Unknown'),
+      datasets: [{
+        data: data.equipment_by_year.map(r => r.c),
+        backgroundColor: '#a855f7',
+        borderRadius: 4,
+      }],
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, ticks: { stepSize: 1, precision: 0 } } },
+    },
+  });
+
+  // OFC age
+  new Chart(document.getElementById('ofcYearChart'), {
+    type: 'bar',
+    data: {
+      labels: data.ofc_by_year.map(r => r.year_laid || 'Unknown'),
+      datasets: [{
+        data: data.ofc_by_year.map(r => r.c),
+        backgroundColor: '#fbbf24',
+        borderRadius: 4,
+      }],
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, ticks: { stepSize: 1, precision: 0 } } },
+    },
+  });
+})();
+</script>
+{% endblock %}

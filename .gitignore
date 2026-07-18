@@ -1,0 +1,23 @@
+# --- Python ---
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# --- Flask instance data (auto-generated on first run) ---
+instance/wan_portal.db
+instance/*.db
+
+# --- Map tile data (large; provide separately, keep the folder) ---
+# The app reads tiles from instance/tiles/active.pmtiles or active.mbtiles.
+# Drop your tile file there locally — it is intentionally not committed.
+*.pmtiles
+*.mbtiles
+
+# --- OS / editor cruft ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

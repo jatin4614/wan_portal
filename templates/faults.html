@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% block title %}Faults | Vajr Comn State{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1 class="page-title">FAULT CONSOLE <small>// LOG &amp; ANALYSIS</small></h1>
+  <div class="page-meta" id="fMeta">—</div>
+</div>
+
+<div class="kpi-grid" id="faultKpis"></div>
+
+<div class="topo-controls">
+  <div class="toggle-group">
+    <button class="toggle-btn active" data-status="all">All</button>
+    <button class="toggle-btn" data-status="OPEN">Open</button>
+    <button class="toggle-btn" data-status="RESOLVED">Resolved</button>
+  </div>
+  <div class="toggle-group">
+    <button class="toggle-btn active" data-sev="all">All Severities</button>
+    <button class="toggle-btn" data-sev="HIGH">High</button>
+    <button class="toggle-btn" data-sev="MEDIUM">Medium</button>
+    <button class="toggle-btn" data-sev="LOW">Low</button>
+  </div>
+  <button class="btn btn-primary" id="addBtn">＋ Log New Fault</button>
+</div>
+
+<div class="filters">
+  <input type="text" id="searchInput" placeholder="Search…" />
+</div>
+
+<div class="card">
+  <div class="tbl-wrap">
+    <table class="tbl" id="dataTable"><thead></thead><tbody></tbody></table>
+  </div>
+</div>
+
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="modalTitle">Log Fault</div>
+      <button class="close-btn" id="closeBtn">×</button>
+    </div>
+    <form id="entryForm">
+      <div class="form-grid" id="formFields"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+        <button type="button" class="btn" id="cancelBtn">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const COLUMNS = [
+  { f: 'fault_id', label: 'Fault ID' },
+  { f: 'category', label: 'Category', type: 'select', options: ['OFC', 'Alt Media', 'Equipment', 'Radio', 'Power', 'Other'] },
+  { f: 'affected_link', label: 'Affected Link' },
+  { f: 'affected_node', label: 'Affected Node' },
+  { f: 'reported_at', label: 'Reported', type: 'datetime-local' },
+  { f: 'resolved_at', label: 'Resolved', type: 'datetime-local' },
+  { f: 'severity', label: 'Severity', type: 'select', options: ['HIGH', 'MEDIUM', 'LOW'] },
+  { f: 'status', label: 'Status', type: 'select', options: ['OPEN', 'RESOLVED'] },
+  { f: 'description', label: 'Description', full: true, type: 'textarea' },
+  { f: 'action_taken', label: 'Action Taken', full: true, type: 'textarea' },
+];
+
+let currentData = [];
+let editingId = null;
+let statusFilter = 'all';
+let sevFilter = 'all';
+
+async function loadTable() {
+  currentData = await fetch('/api/faults').then(r => r.json());
+  renderKpis();
+  renderTable();
+}
+
+function renderKpis() {
+  const open = currentData.filter(f => f.status === 'OPEN');
+  const high = open.filter(f => f.severity === 'HIGH').length;
+  const med = open.filter(f => f.severity === 'MEDIUM').length;
+  const low = open.filter(f => f.severity === 'LOW').length;
+  // MTTR from resolved
+  const resolved = currentData.filter(f => f.status === 'RESOLVED' && f.resolved_at);
+  let mttr = 0;
+  if (resolved.length) {
+    const total = resolved.reduce((s, f) => s + (new Date(f.resolved_at) - new Date(f.reported_at)) / 36e5, 0);
+    mttr = (total / resolved.length).toFixed(1);
+  }
+  document.getElementById('faultKpis').innerHTML = `
+    <div class="kpi bad"><div class="kpi-label">Open · High</div><div class="kpi-value bad">${high}</div></div>
+    <div class="kpi warn"><div class="kpi-label">Open · Medium</div><div class="kpi-value warn">${med}</div></div>
+    <div class="kpi"><div class="kpi-label">Open · Low</div><div class="kpi-value">${low}</div></div>
+    <div class="kpi good"><div class="kpi-label">Resolved (Total)</div><div class="kpi-value good">${resolved.length}</div></div>
+    <div class="kpi amber"><div class="kpi-label">MTTR (hrs)</div><div class="kpi-value amber">${mttr}</div></div>
+  `;
+}
+
+function renderTable() {
+  const search = document.getElementById('searchInput').value.toLowerCase();
+  const filtered = currentData.filter(r => {
+    if (statusFilter !== 'all' && r.status !== statusFilter) return false;
+    if (sevFilter !== 'all' && r.severity !== sevFilter) return false;
+    if (!search) return true;
+    return Object.values(r).some(v => String(v).toLowerCase().includes(search));
+  });
+
+  const thead = document.querySelector('#dataTable thead');
+  thead.innerHTML = '<tr>' + ['Fault ID','Category','Affected','Severity','Status','Reported','Description','Action',''].map(c => `<th>${c}</th>`).join('') + '</tr>';
+
+  const tbody = document.querySelector('#dataTable tbody');
+  if (!filtered.length) {
+    tbody.innerHTML = `<tr><td colspan="9" class="empty">No faults match</td></tr>`;
+  } else {
+    tbody.innerHTML = filtered.map(r => `
+      <tr>
+        <td class="mono">${r.fault_id}</td>
+        <td>${r.category || '—'}</td>
+        <td class="mono">${r.affected_link || r.affected_node || '—'}</td>
+        <td><span class="badge badge-${(r.severity||'').toLowerCase()}">${r.severity || '—'}</span></td>
+        <td><span class="badge badge-${(r.status||'').toLowerCase()}">${r.status}</span></td>
+        <td class="mono" style="font-size:11px;">${(r.reported_at||'').replace('T',' ').slice(0,16)}</td>
+        <td>${r.description || '—'}</td>
+        <td>${r.action_taken || '—'}</td>
+        <td><div class="row-actions">
+          <button class="btn btn-sm" onclick="editRow(${r.id})">Edit</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteRow(${r.id})">Del</button>
+        </div></td>
+      </tr>
+    `).join('');
+  }
+  document.getElementById('fMeta').textContent = `${filtered.length} of ${currentData.length} faults`;
+}
+
+function buildForm(data = {}) {
+  document.getElementById('formFields').innerHTML = COLUMNS.map(c => {
+    let input;
+    if (c.type === 'select') {
+      input = `<select name="${c.f}">${c.options.map(o => `<option ${data[c.f]===o?'selected':''}>${o}</option>`).join('')}</select>`;
+    } else if (c.type === 'datetime-local') {
+      const v = data[c.f] ? data[c.f].slice(0, 16) : '';
+      input = `<input type="datetime-local" name="${c.f}" value="${v}">`;
+    } else if (c.type === 'textarea') {
+      input = `<textarea name="${c.f}" rows="2">${data[c.f] || ''}</textarea>`;
+    } else {
+      input = `<input type="text" name="${c.f}" value="${data[c.f] ?? ''}">`;
+    }
+    return `<div class="${c.full ? 'full' : ''}"><label>${c.label}</label>${input}</div>`;
+  }).join('');
+}
+
+window.editRow = id => {
+  const row = currentData.find(r => r.id === id);
+  editingId = id;
+  document.getElementById('modalTitle').textContent = 'Edit Fault';
+  buildForm(row);
+  document.getElementById('modalBg').classList.add('show');
+};
+
+window.deleteRow = async id => {
+  if (!confirm('Delete this fault entry?')) return;
+  await fetch(`/api/fault_logs/${id}`, { method: 'DELETE' });
+  loadTable();
+};
+
+document.getElementById('addBtn').onclick = () => {
+  editingId = null;
+  document.getElementById('modalTitle').textContent = 'Log New Fault';
+  const now = new Date().toISOString().slice(0, 16);
+  const id = 'FLT-' + new Date().getFullYear() + '-' + String(Math.floor(Math.random() * 900) + 100);
+  buildForm({ status: 'OPEN', severity: 'MEDIUM', reported_at: now, fault_id: id });
+  document.getElementById('modalBg').classList.add('show');
+};
+
+document.getElementById('closeBtn').onclick = document.getElementById('cancelBtn').onclick = () =>
+  document.getElementById('modalBg').classList.remove('show');
+
+document.getElementById('entryForm').onsubmit = async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const data = {};
+  COLUMNS.forEach(c => {
+    let v = fd.get(c.f);
+    if (v === '' || v == null) v = null;
+    data[c.f] = v;
+  });
+  const url = editingId ? `/api/fault_logs/${editingId}` : `/api/fault_logs`;
+  const resp = await fetch(url, {
+    method: editingId ? 'PUT' : 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  const result = await resp.json();
+  if (result.error) { alert('Error: ' + result.error); return; }
+  document.getElementById('modalBg').classList.remove('show');
+  loadTable();
+};
+
+document.querySelectorAll('[data-status]').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-status]').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  statusFilter = b.dataset.status;
+  renderTable();
+}));
+document.querySelectorAll('[data-sev]').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-sev]').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  sevFilter = b.dataset.sev;
+  renderTable();
+}));
+
+document.getElementById('searchInput').oninput = renderTable;
+loadTable();
+</script>
+{% endblock %}

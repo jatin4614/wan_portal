@@ -1,0 +1,858 @@
+{% extends "base.html" %}
+{% block title %}Dashboard | Vajr Comn State{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="/static/vendor/leaflet.css" />
+<script src="/static/vendor/leaflet.js"></script>
+<script src="/static/vendor/vis-network.min.js"></script>
+<!-- MapLibre GL + PMTiles + leaflet-maplibre-gl plugin: only used when a .pmtiles
+     file is the active offline map. Loaded conditionally below to avoid the
+     ~1 MB cost when not needed. -->
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.css" />
+{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+      Network Dashboard
+    </h1>
+  </div>
+  <div class="page-meta">{{ today }}</div>
+</div>
+
+<!-- Hero stat tiles - colorful overview at the top -->
+<div class="hero-stats" style="grid-template-columns:repeat(6,1fr);">
+  <!-- OFC Links: count / total length -->
+  <div class="hero-tile tone-{% if kpis.ofc_down > 0 %}bad{% elif kpis.ofc_degraded > 0 %}warn{% else %}good{% endif %}">
+    <div class="hero-icon hero-icon-{% if kpis.ofc_down > 0 %}bad{% elif kpis.ofc_degraded > 0 %}warn{% else %}good{% endif %}">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+    </div>
+    <div class="hero-body">
+      <div class="hero-label">OFC Links</div>
+      <div class="hero-value">{{ kpis.ofc_total }}<span class="hero-value-unit">links</span></div>
+      <div class="hero-sub">{{ kpis.ofc_length_km }} km total</div>
+    </div>
+  </div>
+
+  <!-- JFC Links: count / total length -->
+  <div class="hero-tile tone-info">
+    <div class="hero-icon hero-icon-info">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>
+    </div>
+    <div class="hero-body">
+      <div class="hero-label">JFC Links</div>
+      <div class="hero-value">{{ kpis.jfc_total }}<span class="hero-value-unit">links</span></div>
+      <div class="hero-sub">{{ kpis.jfc_length_km }} km total</div>
+    </div>
+  </div>
+
+  <!-- Microwave: total sites / operational -->
+  <div class="hero-tile tone-{% if kpis.mw_operational < kpis.mw_total %}warn{% else %}good{% endif %}">
+    <div class="hero-icon hero-icon-{% if kpis.mw_operational < kpis.mw_total %}warn{% else %}good{% endif %}">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="M8 6l4-3 4 3"/><path d="M6 22l3-9"/><path d="M18 22l-3-9"/><path d="M9 13h6"/></svg>
+    </div>
+    <div class="hero-body">
+      <div class="hero-label">Microwave Sites</div>
+      <div class="hero-value">{{ kpis.mw_total }}<span class="hero-value-unit">sites</span></div>
+      <div class="hero-sub">{{ kpis.mw_operational }} operational</div>
+    </div>
+  </div>
+
+  <!-- Satellite: total / operational -->
+  <div class="hero-tile tone-{% if kpis.sat_operational < kpis.sat_total %}warn{% else %}good{% endif %}">
+    <div class="hero-icon hero-icon-{% if kpis.sat_operational < kpis.sat_total %}warn{% else %}good{% endif %}">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 7 9 3 5 7l4 4"/><path d="m17 11 4 4-4 4-4-4"/><path d="m8 12 4 4"/><path d="m16 8 4-4"/><path d="M9 21a6 6 0 0 0-6-6"/></svg>
+    </div>
+    <div class="hero-body">
+      <div class="hero-label">Satellite Links</div>
+      <div class="hero-value">{{ kpis.sat_total }}<span class="hero-value-unit">links</span></div>
+      <div class="hero-sub">{{ kpis.sat_operational }} operational</div>
+    </div>
+  </div>
+
+  <!-- BBR: total / operational -->
+  <div class="hero-tile tone-{% if kpis.bbr_operational < kpis.bbr_total %}warn{% else %}good{% endif %}">
+    <div class="hero-icon hero-icon-{% if kpis.bbr_operational < kpis.bbr_total %}warn{% else %}good{% endif %}">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>
+    </div>
+    <div class="hero-body">
+      <div class="hero-label">BBR Links</div>
+      <div class="hero-value">{{ kpis.bbr_total }}<span class="hero-value-unit">links</span></div>
+      <div class="hero-sub">{{ kpis.bbr_operational }} operational</div>
+    </div>
+  </div>
+
+  <!-- Open Faults -->
+  <div class="hero-tile tone-{% if kpis.faults_high > 0 %}bad{% elif kpis.faults_open > 0 %}warn{% else %}good{% endif %}">
+    <div class="hero-icon hero-icon-{% if kpis.faults_high > 0 %}bad{% elif kpis.faults_open > 0 %}warn{% else %}good{% endif %}">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    </div>
+    <div class="hero-body">
+      <div class="hero-label">Open Faults</div>
+      <div class="hero-value">{{ kpis.faults_open }}<span class="hero-value-unit">{% if kpis.faults_high > 0 %}{{ kpis.faults_high }} high{% endif %}</span></div>
+      <div class="hero-sub">MTTR {{ mttr.mttr_hours }}h · {{ mttr.resolved_count }} resolved</div>
+    </div>
+  </div>
+</div>
+
+<!-- Topology controls -->
+<div class="topo-controls">
+  <div class="toggle-group">
+    <button class="toggle-btn active" data-view="geo">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+      Geographic
+    </button>
+    <button class="toggle-btn" data-view="logical">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/><line x1="6" y1="9" x2="6" y2="15"/><line x1="18" y1="9" x2="18" y2="15"/><line x1="9" y1="6" x2="15" y2="6"/><line x1="9" y1="18" x2="15" y2="18"/></svg>
+      Logical
+    </button>
+  </div>
+  <div class="toggle-group">
+    <button class="toggle-btn active" data-filter="all">All Links</button>
+    <button class="toggle-btn" data-filter="ofc">OFC Only</button>
+    <button class="toggle-btn" data-filter="alt">Alt Media Only</button>
+  </div>
+  <div class="toggle-group">
+    <button class="toggle-btn active" data-status="all">All Status</button>
+    <button class="toggle-btn" data-status="issues">⚠ Issues Only</button>
+  </div>
+  <div id="activeFilterChip" style="display:none;"></div>
+</div>
+
+<!-- Topology map with merged data -->
+<div class="topo-stage" style="margin-bottom:20px;">
+  <div id="geoMap"></div>
+  <div id="logicalMap" style="display:none;"></div>
+  <div class="legend">
+    <div style="font-size:10px;color:var(--text-faint);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.06em;font-weight:700;">Link Status</div>
+    <div class="legend-row"><span class="legend-swatch" style="background:#059669;"></span> UP</div>
+    <div class="legend-row"><span class="legend-swatch" style="background:#d97706;"></span> Degraded</div>
+    <div class="legend-row"><span class="legend-swatch" style="background:#dc2626;"></span> Down</div>
+    <div style="font-size:10px;color:var(--text-faint);margin:8px 0 6px;text-transform:uppercase;letter-spacing:0.06em;font-weight:700;">Media Icons</div>
+    <div class="legend-row"><span class="legend-icon">🗼</span> Microwave</div>
+    <div class="legend-row"><span class="legend-icon">🛰️</span> Satellite</div>
+    <div class="legend-row"><span class="legend-icon">📡</span> Broadband Radio</div>
+    <div class="legend-row"><span class="legend-icon">📶</span> BTS / Cellular</div>
+    <div class="legend-row"><span class="legend-icon">🔌</span> Copper JFC</div>
+    <div class="legend-row"><span class="legend-icon">📻</span> URRF / RRF</div>
+  </div>
+</div>
+
+<!-- Node connectivity state + Recent faults -->
+<div class="grid-2">
+  <div class="card">
+    <div class="card-head">
+      <div class="card-title">
+        <span class="card-title-icon" style="background:var(--info-bg);color:var(--info);">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/></svg>
+        </span>
+        Node Connectivity State
+      </div>
+      <div class="card-sub">Network nodes</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px;">
+      <div style="background:var(--good-soft);border:1px solid var(--good-bg);border-radius:8px;padding:10px 12px;text-align:center;">
+        <div style="font-size:10px;color:var(--good);font-weight:700;letter-spacing:0.05em;text-transform:uppercase;">FULLY CONNECTED</div>
+        <div style="font-size:24px;font-weight:700;color:var(--good);margin-top:4px;">{{ state_summary.FULL }}</div>
+      </div>
+      <div style="background:var(--warn-soft);border:1px solid var(--warn-bg);border-radius:8px;padding:10px 12px;text-align:center;">
+        <div style="font-size:10px;color:var(--warn);font-weight:700;letter-spacing:0.05em;text-transform:uppercase;">DEGRADED</div>
+        <div style="font-size:24px;font-weight:700;color:var(--warn);margin-top:4px;">{{ state_summary.DEGRADED }}</div>
+      </div>
+      <div style="background:var(--bad-soft);border:1px solid var(--bad-bg);border-radius:8px;padding:10px 12px;text-align:center;">
+        <div style="font-size:10px;color:var(--bad);font-weight:700;letter-spacing:0.05em;text-transform:uppercase;">FAULTY EQUIPMENT</div>
+        <div style="font-size:24px;font-weight:700;color:var(--bad);margin-top:4px;">{{ state_summary.ISOLATED }}</div>
+      </div>
+    </div>
+    <div id="nodeGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div class="card-title">
+        <span class="card-title-icon" style="background:var(--bad-bg);color:var(--bad);">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </span>
+        Recent Faults
+      </div>
+      <a href="{{ url_for('faults_view') }}" class="card-sub">View all →</a>
+    </div>
+    {% if recent_faults %}
+    <div style="display:flex;flex-direction:column;gap:8px;max-height:520px;overflow-y:auto;" id="faultList">
+      {% for f in recent_faults %}
+      <div class="fault-clickable"
+           data-fault-id="{{ f.fault_id }}"
+           data-affected-link="{{ f.affected_link or '' }}"
+           data-affected-node="{{ f.affected_node or '' }}"
+           data-category="{{ f.category or '' }}"
+           onclick="filterMapByFault(this)"
+           style="padding:10px 12px;background:var(--bg-subtle);border-left:3px solid {% if f.severity=='HIGH' %}var(--bad){% elif f.severity=='MEDIUM' %}var(--warn){% else %}var(--text-faint){% endif %};">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <span style="font-size:11px;color:var(--accent);font-weight:700;">{{ f.fault_id }}</span>
+          <span class="badge badge-{{ f.severity|lower }}">{{ f.severity }}</span>
+        </div>
+        <div style="font-size:13px;color:var(--text);margin-bottom:3px;font-weight:500;">{{ f.description }}</div>
+        <div style="font-size:11px;color:var(--text-faint);display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+          <span style="font-weight:600;">{{ f.affected_link or f.affected_node or '—' }}</span>
+          <span>·</span>
+          <span>{{ f.reported_at[:16].replace('T',' ') }}</span>
+          <span class="badge badge-{{ f.status|lower }}" style="margin-left:auto;">{{ f.status }}</span>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <div style="margin-top:10px;text-align:right;">
+      <button class="btn btn-sm" id="clearFaultFilter" style="display:none;" onclick="clearFaultFilter()">✕ Clear filter</button>
+    </div>
+    {% else %}
+    <div class="empty">No recent faults</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let nodes = [], ofc = [], alt = [];
+let currentView = 'geo';
+let currentFilter = 'all';
+let currentStatus = 'all';
+let geoMap, geoLayers = { nodes: [], links: [], mediaIcons: [] };
+let logicalNet;
+
+const STATUS_COLORS = { UP: '#059669', DEGRADED: '#d97706', DOWN: '#dc2626' };
+
+// Emoji-based icons keep this offline-friendly and avoid extra image assets
+const MEDIA_ICON = {
+  'Microwave':       { emoji: '🗼', color: '#7c3aed' },
+  'Satellite':       { emoji: '🛰️', color: '#2563eb' },
+  'Broadband Radio': { emoji: '📡', color: '#0891b2' },
+  'BTS':             { emoji: '📶', color: '#059669' },
+  'Cellular Tower':  { emoji: '📶', color: '#059669' },
+  'Copper JFC':      { emoji: '🔌', color: '#92400e' },
+  'URRF':            { emoji: '📻', color: '#be185d' },
+  'RRF':             { emoji: '📻', color: '#9d174d' },
+};
+
+async function loadData() {
+  [nodes, ofc, alt] = await Promise.all([
+    fetch('/api/nodes').then(r => r.json()),
+    fetch('/api/ofc').then(r => r.json()),
+    fetch('/api/alternate').then(r => r.json()),
+  ]);
+  renderNodeGrid();
+  renderGeo();
+  renderLogical();
+}
+
+function renderNodeGrid() {
+  const grid = document.getElementById('nodeGrid');
+  // Hide Coy/Post nodes from the visible grid (they're in the summary count)
+  const visible = nodes.filter(n => n.node_type !== 'Coy' && n.node_type !== 'Post');
+  const sorted = [...visible].sort((a, b) => a.name.localeCompare(b.name));
+  grid.innerHTML = sorted.map(n => {
+    const tone = n.state === 'FULL' ? 'good' : n.state === 'DEGRADED' ? 'warn' : 'bad';
+    return `
+      <div class="node-card node-card-state-${tone}" onclick="showNodeDetail('${n.name}')">
+        <div class="node-card-name">
+          <span>${n.name}</span>
+          <span class="node-card-pulse ${tone}"></span>
+        </div>
+        <div class="node-card-stats">
+          <span class="node-card-stat" title="Region">${n.region || '—'}</span>
+          <span class="node-card-stat ${tone === 'bad' ? 'bad' : ''}" title="State">${n.state === 'ISOLATED' ? 'FAULTY' : n.state}</span>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function getFilteredLinks() {
+  let links = [];
+  if (currentFilter === 'all' || currentFilter === 'ofc') {
+    links = links.concat(ofc.map(l => ({ ...l, _kind: 'ofc' })));
+  }
+  if (currentFilter === 'all' || currentFilter === 'alt') {
+    links = links.concat(alt.map(l => ({ ...l, _kind: 'alt' })));
+  }
+  if (currentStatus === 'issues') {
+    links = links.filter(l => l.status !== 'UP');
+  }
+  // Apply fault filter if active
+  links = applyFaultFilter(links);
+  return links;
+}
+
+// Helper: build the popup body for a clicked node — listing all attached media + equipment
+async function nodeDetailHtml(name) {
+  const data = await fetch(`/api/node-detail/${encodeURIComponent(name)}`).then(r => r.json());
+  if (data.error) return `<div class="node-popup-title">${name}</div><div>Not found</div>`;
+
+  const stateColor = data.state === 'FULL' ? '#059669' : data.state === 'DEGRADED' ? '#d97706' : '#dc2626';
+  const badge = s => `<span class="badge badge-${(s||'').toLowerCase()}">${s||'—'}</span>`;
+
+  let html = `
+    <div class="node-popup-title">${data.node.name}</div>
+    <div class="node-popup-meta">
+      ${data.node.region || ''} · ${data.node.node_type || ''}
+      <span style="color:${stateColor};font-weight:700;margin-left:6px;">[${data.state}]</span>
+    </div>
+    <div class="node-popup-section" style="padding-top:8px;">
+      <div style="display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--text-dim);">
+        ${data.node.formation ? `<span><strong>Formation:</strong> ${data.node.formation}</span>` : ''}
+        ${data.node.unit ? `<span><strong>Unit:</strong> ${data.node.unit}</span>` : ''}
+        ${data.node.coy ? `<span><strong>Coy:</strong> ${data.node.coy}</span>` : ''}
+        <span><strong>Contact No:</strong> ${data.node.contact_no || '—'}</span>
+      </div>
+    </div>
+  `;
+
+  // OFC links
+  if (data.ofc_links.length) {
+    html += `<div class="node-popup-section"><div class="node-popup-section-title">OFC Links (${data.ofc_links.length})</div><ul class="node-popup-list">`;
+    data.ofc_links.forEach(l => {
+      const other = l.from_node === name ? l.to_node : l.from_node;
+      html += `<li><span class="name">${l.link_id} → ${other}</span>${badge(l.status)}</li>`;
+    });
+    html += '</ul></div>';
+  }
+
+  // Alt media
+  if (data.alt_media.length) {
+    html += `<div class="node-popup-section"><div class="node-popup-section-title">Alternate Media (${data.alt_media.length})</div><ul class="node-popup-list">`;
+    data.alt_media.forEach(l => {
+      const icon = (MEDIA_ICON[l.media_type] || {}).emoji || '';
+      const other = l.to_node ? (l.from_node === name ? l.to_node : l.from_node) : '(local)';
+      html += `<li><span class="name">${icon} ${l.media_type} ${l.to_node ? '→ ' + other : ''}</span>${badge(l.status)}</li>`;
+    });
+    html += '</ul></div>';
+  }
+
+  // Terminal equipment
+  if (data.terminal_equipment.length) {
+    html += `<div class="node-popup-section"><div class="node-popup-section-title">Terminal Equipment (${data.terminal_equipment.length})</div><ul class="node-popup-list">`;
+    data.terminal_equipment.forEach(e => {
+      html += `<li><span class="name">${e.equipment_id}</span><span class="meta">${e.eqpt_type} · ${badge(e.status).replace(/<[^>]*>/g,'')}</span></li>`;
+    });
+    html += '</ul></div>';
+  }
+
+  // Radio equipment
+  if (data.radio_equipment.length) {
+    html += `<div class="node-popup-section"><div class="node-popup-section-title">Radio Equipment (${data.radio_equipment.length})</div><ul class="node-popup-list">`;
+    data.radio_equipment.forEach(e => {
+      html += `<li><span class="name">${e.equipment_id}</span><span class="meta">${e.radio_type} · ${badge(e.status).replace(/<[^>]*>/g,'')}</span></li>`;
+    });
+    html += '</ul></div>';
+  }
+
+  return html;
+}
+
+// Modal-style popup when user clicks a node card in the grid
+window.showNodeDetail = async function(name) {
+  const html = await nodeDetailHtml(name);
+  let modal = document.getElementById('nodeModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'nodeModal';
+    modal.className = 'modal-bg';
+    modal.innerHTML = `<div class="modal" style="max-width:520px;"><div class="modal-head"><div class="modal-title">Node Detail</div><button class="close-btn" id="nmClose">×</button></div><div id="nmBody"></div></div>`;
+    document.body.appendChild(modal);
+    modal.querySelector('#nmClose').onclick = () => modal.classList.remove('show');
+    modal.onclick = (e) => { if (e.target === modal) modal.classList.remove('show'); };
+  }
+  modal.querySelector('#nmBody').innerHTML = html;
+  modal.classList.add('show');
+};
+
+// ---- Minimal Protomaps-compatible style for MapLibre GL ----
+// Targets the layer names emitted by Protomaps basemaps PMTiles files.
+// A full Protomaps theme has hundreds of layers; this is a clean, readable
+// subset that gives a clean light-style basemap suitable for the WAN portal.
+function protomapsLightLayers(srcId) {
+  const src = srcId;
+  return [
+    { id: 'background', type: 'background',
+      paint: { 'background-color': '#f5f3ec' } },
+
+    // Earth / land
+    { id: 'earth', type: 'fill', source: src, 'source-layer': 'earth',
+      paint: { 'fill-color': '#eee9dd' } },
+
+    // Natural features
+    { id: 'landuse-park', type: 'fill', source: src, 'source-layer': 'landuse',
+      filter: ['in', ['get', 'kind'], ['literal', ['park', 'forest', 'wood', 'nature_reserve', 'protected_area']]],
+      paint: { 'fill-color': '#cfe1c6' } },
+    { id: 'landuse-residential', type: 'fill', source: src, 'source-layer': 'landuse',
+      filter: ['in', ['get', 'kind'], ['literal', ['residential', 'neighbourhood']]],
+      paint: { 'fill-color': '#ebe6da' } },
+
+    // Water
+    { id: 'water', type: 'fill', source: src, 'source-layer': 'water',
+      paint: { 'fill-color': '#a8c5dd' } },
+
+    // Roads (order matters: minor first, major last so majors are drawn on top)
+    { id: 'roads-minor', type: 'line', source: src, 'source-layer': 'roads',
+      filter: ['in', ['get', 'kind'], ['literal', ['minor_road', 'other']]],
+      minzoom: 11,
+      paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 11, 0.5, 16, 2] } },
+    { id: 'roads-medium', type: 'line', source: src, 'source-layer': 'roads',
+      filter: ['==', ['get', 'kind'], 'medium_road'],
+      paint: {
+        'line-color': '#fcdcb0',
+        'line-width': ['interpolate', ['linear'], ['zoom'], 8, 0.8, 14, 4]
+      } },
+    { id: 'roads-major', type: 'line', source: src, 'source-layer': 'roads',
+      filter: ['in', ['get', 'kind'], ['literal', ['highway', 'major_road']]],
+      paint: {
+        'line-color': '#f5b97b',
+        'line-width': ['interpolate', ['linear'], ['zoom'], 5, 0.6, 10, 2.2, 14, 6]
+      } },
+
+    // Railway lines (less prominent)
+    { id: 'roads-rail', type: 'line', source: src, 'source-layer': 'roads',
+      filter: ['==', ['get', 'kind'], 'rail'],
+      minzoom: 9,
+      paint: {
+        'line-color': '#9aa0a6',
+        'line-width': 1,
+        'line-dasharray': [3, 3]
+      } },
+
+    // Boundaries (country / state lines)
+    { id: 'boundaries', type: 'line', source: src, 'source-layer': 'boundaries',
+      paint: { 'line-color': '#a07cb8', 'line-width': 1, 'line-dasharray': [4, 2] } },
+
+    // Place labels (cities, towns, villages)
+    { id: 'places', type: 'symbol', source: src, 'source-layer': 'places',
+      minzoom: 4,
+      layout: {
+        'text-field': ['get', 'name'],
+        'text-font': ['Noto Sans Regular'],
+        'text-size': ['interpolate', ['linear'], ['zoom'], 4, 9, 8, 12, 14, 16]
+      },
+      paint: { 'text-color': '#333', 'text-halo-color': '#fff', 'text-halo-width': 1.5 } }
+  ];
+}
+
+// ---- Helper: dynamically load a script/stylesheet on demand ----
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('Failed to load ' + src));
+    document.head.appendChild(s);
+  });
+}
+
+// ---- Geographic view (Leaflet) with custom media markers ----
+async function renderGeo() {
+  if (!geoMap) {
+    let center = [22.5, 80];
+    let zoom = 5;
+    let offlineKind = null;       // null | 'mbtiles' | 'pmtiles-raster' | 'pmtiles-vector'
+    let pmtilesInfo = null;
+    let mbtilesInfo = null;
+
+    try {
+      const info = await fetch('/api/tiles/info').then(r => r.json());
+      if (info.loaded) {
+        if (info.format_container === 'pmtiles') {
+          offlineKind = info.is_vector ? 'pmtiles-vector' : 'pmtiles-raster';
+          pmtilesInfo = info;
+        } else {
+          offlineKind = 'mbtiles';
+          mbtilesInfo = info;
+        }
+        // Centre / zoom from metadata
+        if (info.center) {
+          const parts = String(info.center).split(',').map(Number);
+          if (parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+            center = [parts[1], parts[0]];  // both formats are "lng,lat,zoom"
+            if (parts.length >= 3 && !isNaN(parts[2])) zoom = parts[2];
+          }
+        }
+        // Offline indicator badge
+        const stage = document.querySelector('.topo-stage');
+        if (stage && !stage.querySelector('.offline-badge')) {
+          const badge = document.createElement('div');
+          badge.className = 'offline-badge';
+          badge.style.cssText = 'position:absolute;top:12px;right:12px;background:rgba(5,150,105,0.95);color:white;padding:4px 10px;border-radius:12px;font-size:11px;font-weight:700;letter-spacing:0.05em;z-index:1000;box-shadow:var(--shadow);';
+          const label = offlineKind === 'pmtiles-vector' ? '● OFFLINE MAP · VECTOR'
+                      : offlineKind === 'pmtiles-raster' ? '● OFFLINE MAP · PMTILES'
+                      : '● OFFLINE MAP';
+          badge.innerHTML = label;
+          stage.appendChild(badge);
+        }
+      }
+    } catch (e) { /* fallback to online */ }
+
+    geoMap = L.map('geoMap', {
+      center, zoom,
+      zoomControl: true,
+      attributionControl: false,
+    });
+
+    if (offlineKind === 'pmtiles-vector') {
+      // Vector PMTiles: load MapLibre GL JS + pmtiles + leaflet-maplibre-gl
+      // plugin, then mount a MapLibre layer underneath Leaflet's overlays.
+      try {
+        await loadScript('https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.js');
+        await loadScript('https://unpkg.com/pmtiles@3.0.7/dist/pmtiles.js');
+        await loadScript('https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js');
+
+        // Register pmtiles:// protocol with MapLibre, pointing at our backend
+        const protocol = new pmtiles.Protocol();
+        maplibregl.addProtocol('pmtiles', protocol.tile);
+        const pmtilesUrl = `pmtiles://${location.origin}/api/pmtiles`;
+        const p = new pmtiles.PMTiles(`${location.origin}/api/pmtiles`);
+        protocol.add(p);
+
+        // Use the Protomaps "light" style — works with Protomaps planet tiles
+        const styleSpec = {
+          version: 8,
+          glyphs: 'https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf',
+          sources: {
+            protomaps: {
+              type: 'vector',
+              url: pmtilesUrl,
+              attribution: '© OpenStreetMap contributors, Protomaps'
+            }
+          },
+          layers: protomapsLightLayers('protomaps')
+        };
+
+        const glLayer = L.maplibreGL({ style: styleSpec }).addTo(geoMap);
+      } catch (e) {
+        console.error('PMTiles vector load failed:', e);
+        // Last-resort fallback: load CartoCDN raster
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+          { maxZoom: 19 }).addTo(geoMap);
+      }
+    } else if (offlineKind === 'pmtiles-raster') {
+      // Raster PMTiles: use the pmtiles JS library to fetch raster tiles
+      try {
+        await loadScript('https://unpkg.com/pmtiles@3.0.7/dist/pmtiles.js');
+        const p = new pmtiles.PMTiles(`${location.origin}/api/pmtiles`);
+        const tilesLayer = L.gridLayer({
+          maxZoom: pmtilesInfo.maxzoom || 18,
+          minZoom: pmtilesInfo.minzoom || 0,
+        });
+        tilesLayer.createTile = function (coords, done) {
+          const tile = document.createElement('img');
+          p.getZxy(coords.z, coords.x, coords.y).then(arr => {
+            if (!arr) { done(null, tile); return; }
+            const blob = new Blob([arr.data], { type: 'image/' + (pmtilesInfo.format || 'png') });
+            tile.src = URL.createObjectURL(blob);
+            tile.onload = () => done(null, tile);
+          }).catch(err => done(err, tile));
+          return tile;
+        };
+        tilesLayer.addTo(geoMap);
+      } catch (e) {
+        console.error('PMTiles raster load failed:', e);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+          { maxZoom: 19 }).addTo(geoMap);
+      }
+    } else if (offlineKind === 'mbtiles') {
+      L.tileLayer('/tiles/{z}/{x}/{y}.png', {
+        maxZoom: (mbtilesInfo && mbtilesInfo.maxzoom) || 18,
+        minZoom: (mbtilesInfo && mbtilesInfo.minzoom) || 0,
+      }).addTo(geoMap);
+    } else {
+      // Online OSM via CartoCDN
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+        { maxZoom: 19 }).addTo(geoMap);
+    }
+  }
+
+  // Clear
+  geoLayers.nodes.forEach(l => geoMap.removeLayer(l));
+  geoLayers.links.forEach(l => geoMap.removeLayer(l));
+  geoLayers.mediaIcons.forEach(l => geoMap.removeLayer(l));
+  geoLayers = { nodes: [], links: [], mediaIcons: [] };
+
+  const nodeMap = {};
+  nodes.forEach(n => nodeMap[n.name] = n);
+
+  // Draw links between two nodes
+  getFilteredLinks().forEach(l => {
+    const from = nodeMap[l.from_node];
+    const to = l.to_node ? nodeMap[l.to_node] : null;
+    // Skip lines that don't have two endpoints (single-location media will be drawn as icons)
+    if (!from || !to) return;
+    // Hide links touching Coy/Post nodes (those nodes are filtered out)
+    const hide = (n) => n && (n.node_type === 'Coy' || n.node_type === 'Post');
+    if (hide(from) || hide(to)) return;
+    if (from.latitude == null || to.latitude == null) return;
+
+    const color = l._kind === 'alt' ? '#7c3aed' : (STATUS_COLORS[l.status] || '#888');
+    const style = {
+      color,
+      weight: l._kind === 'alt' ? 1.8 : 2.8,
+      opacity: 0.85,
+      dashArray: l._kind === 'alt' ? '6,6' : (l.status === 'DEGRADED' ? '4,4' : null),
+    };
+    const line = L.polyline([[from.latitude, from.longitude], [to.latitude, to.longitude]], style);
+    line.bindPopup(`
+      <div style="font-family:'JetBrains Mono',monospace;">
+        <strong>${l.link_id || l.media_type}</strong><br>
+        ${l.from_node} → ${l.to_node}<br>
+        ${l._kind === 'ofc' ? `${l.distance_km} km · ${l.no_of_fiber} fibers · ${l.cable_type}` : `${l.spec || ''} · ${l.hop_distance_km || ''} km`}<br>
+        Status: <strong style="color:${color};">${l.status}</strong>
+      </div>
+    `);
+    line.addTo(geoMap);
+    geoLayers.links.push(line);
+  });
+
+  // Single-location alt media (Satellite, URRF/RRF without a to_node)
+  if (currentFilter !== 'ofc') {
+    alt.filter(m => !m.to_node).forEach(m => {
+      if (currentStatus === 'issues' && m.status === 'UP') return;
+      const node = nodeMap[m.from_node];
+      if (!node) return;
+      const meta = MEDIA_ICON[m.media_type] || { emoji: '📍', color: '#6b7280' };
+      const sColor = STATUS_COLORS[m.status] || '#6b7280';
+      // Offset slightly so the icon doesn't sit directly on the node marker
+      const icon = L.divIcon({
+        className: '',
+        html: `<div class="media-marker-wrap" style="border-color:${sColor};"><span style="font-size:14px;">${meta.emoji}</span></div>`,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+      });
+      const marker = L.marker([node.latitude + 0.4, node.longitude + 0.4], { icon });
+      marker.bindPopup(`
+        <div style="font-family:'JetBrains Mono',monospace;">
+          <strong>${meta.emoji} ${m.media_type}</strong><br>
+          Location: ${m.from_node}<br>
+          ${m.spec ? m.spec + '<br>' : ''}
+          Status: <strong style="color:${sColor};">${m.status}</strong>
+          ${m.remarks ? '<br><em style="font-size:11px;">' + m.remarks + '</em>' : ''}
+        </div>
+      `);
+      marker.addTo(geoMap);
+      geoLayers.mediaIcons.push(marker);
+    });
+  }
+
+  // Node markers — clickable to show full node detail.
+  // Hide Coy/Post types per requirement (kept in summary count only).
+  nodes.filter(n => n.node_type !== 'Coy' && n.node_type !== 'Post').forEach(n => {
+    if (n.latitude == null || n.longitude == null) return;  // skip if no coords
+    const stateColor = n.state === 'FULL' ? '#059669' : n.state === 'DEGRADED' ? '#d97706' : '#dc2626';
+    // Bigger square markers for Div-type nodes (HQ-like)
+    const isDivType = (n.node_type || '').startsWith('Div');
+    const isHQ = isDivType || (n.node_type || '').includes('HQ');
+    const size = isHQ ? 18 : 14;
+    const icon = L.divIcon({
+      className: 'node-marker',
+      html: `
+        <div style="position:relative;">
+          <div style="width:${isHQ?18:14}px;height:${isHQ?18:14}px;background:${stateColor};border:2px solid #fff;border-radius:${isHQ?'2px':'50%'};box-shadow:0 0 0 2px ${stateColor}66, 0 2px 4px rgba(0,0,0,0.2);"></div>
+          <div style="position:absolute;top:${isHQ?22:18}px;left:50%;transform:translateX(-50%);font-family:'JetBrains Mono',monospace;font-size:10px;color:#0f172a;background:rgba(255,255,255,0.92);padding:1px 6px;border-radius:3px;white-space:nowrap;border:1px solid #e2e8f0;font-weight:600;">${n.name}</div>
+        </div>`,
+      iconSize: [isHQ?18:14, isHQ?18:14],
+      iconAnchor: [isHQ?9:7, isHQ?9:7],
+    });
+    const m = L.marker([n.latitude, n.longitude], { icon });
+    // Use a popup with placeholder, populate on click
+    m.bindPopup('<div>Loading…</div>', { minWidth: 280, maxWidth: 320 });
+    m.on('click', async () => {
+      const html = await nodeDetailHtml(n.name);
+      m.setPopupContent(html);
+    });
+    m.addTo(geoMap);
+    geoLayers.nodes.push(m);
+  });
+}
+
+// ---- Logical view (vis-network) ----
+function renderLogical() {
+  // Hide Coy/Post in logical view as well
+  const visibleNodes = nodes.filter(n => n.node_type !== 'Coy' && n.node_type !== 'Post');
+  const visibleNames = new Set(visibleNodes.map(n => n.name));
+  const visNodes = visibleNodes.map(n => {
+    const color = n.state === 'FULL' ? '#059669' : n.state === 'DEGRADED' ? '#d97706' : '#dc2626';
+    const isDivType = (n.node_type || '').startsWith('Div');
+    const isHQ = isDivType || (n.node_type || '').includes('HQ');
+    return {
+      id: n.name,
+      label: n.name,
+      color: { background: '#ffffff', border: color, highlight: { background: '#e0f2fe', border: '#0369a1' } },
+      borderWidth: 2,
+      shape: isHQ ? 'square' : 'dot',
+      size: isHQ ? 20 : 14,
+      font: { color: '#0f172a', face: 'Arial', size: 12 },
+    };
+  });
+
+  // Synthetic nodes for single-location alt media (Satellite, URRF/RRF)
+  const syntheticNodes = [];
+  const syntheticEdges = [];
+  if (currentFilter !== 'ofc') {
+    alt.filter(m => !m.to_node).forEach((m, i) => {
+      if (currentStatus === 'issues' && m.status === 'UP') return;
+      const meta = MEDIA_ICON[m.media_type] || { emoji: '📍' };
+      const id = `media_${i}`;
+      const sColor = STATUS_COLORS[m.status] || '#6b7280';
+      syntheticNodes.push({
+        id, label: `${meta.emoji} ${m.media_type}`,
+        color: { background: '#fff', border: sColor },
+        shape: 'box',
+        font: { face: 'JetBrains Mono', size: 11, color: '#0f172a' },
+        borderWidth: 2,
+        margin: 6,
+      });
+      syntheticEdges.push({
+        from: m.from_node, to: id,
+        color: { color: '#7c3aed' },
+        width: 1.5,
+        dashes: [4, 4],
+      });
+    });
+  }
+
+  const visEdges = getFilteredLinks()
+    .filter(l => l.to_node)
+    .filter(l => visibleNames.has(l.from_node) && visibleNames.has(l.to_node))
+    .map((l, i) => {
+    const color = l._kind === 'alt' ? '#7c3aed' : (STATUS_COLORS[l.status] || '#888');
+    return {
+      id: `e${i}`,
+      from: l.from_node,
+      to: l.to_node,
+      color: { color, highlight: '#0369a1' },
+      width: l._kind === 'alt' ? 1.8 : 2.8,
+      dashes: l._kind === 'alt' ? [6, 6] : (l.status === 'DEGRADED' ? [4, 4] : false),
+      title: `${l.link_id || l.media_type}: ${l.from_node} → ${l.to_node} [${l.status}]`,
+      smooth: { type: 'continuous', roundness: 0.2 },
+    };
+  });
+
+  const container = document.getElementById('logicalMap');
+  const data = {
+    nodes: new vis.DataSet([...visNodes, ...syntheticNodes]),
+    edges: new vis.DataSet([...visEdges, ...syntheticEdges]),
+  };
+  const options = {
+    physics: {
+      enabled: true,
+      barnesHut: { gravitationalConstant: -8000, springLength: 180, springConstant: 0.04 },
+      stabilization: { iterations: 200 },
+    },
+    interaction: { hover: true, tooltipDelay: 100 },
+    nodes: { font: { color: '#0f172a' } },
+  };
+  if (logicalNet) logicalNet.destroy();
+  logicalNet = new vis.Network(container, data, options);
+
+  // Clicking a real node opens detail modal (synthetic nodes are ignored)
+  logicalNet.on('click', (params) => {
+    if (params.nodes.length) {
+      const id = params.nodes[0];
+      if (nodes.find(n => n.name === id)) showNodeDetail(id);
+    }
+  });
+}
+
+// ---- Toggles ----
+document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-view]').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  currentView = b.dataset.view;
+  if (currentView === 'geo') {
+    document.getElementById('geoMap').style.display = 'block';
+    document.getElementById('logicalMap').style.display = 'none';
+    if (geoMap) setTimeout(() => geoMap.invalidateSize(), 100);
+  } else {
+    document.getElementById('geoMap').style.display = 'none';
+    document.getElementById('logicalMap').style.display = 'block';
+    if (logicalNet) logicalNet.redraw();
+  }
+}));
+
+document.querySelectorAll('[data-filter]').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-filter]').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  currentFilter = b.dataset.filter;
+  renderGeo(); renderLogical();
+}));
+
+document.querySelectorAll('[data-status]').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-status]').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  currentStatus = b.dataset.status;
+  renderGeo(); renderLogical();
+}));
+
+// =============================================================================
+// Click a recent fault → filter the map to show only the affected link/node
+// =============================================================================
+let faultFilter = null;  // { affectedLink, affectedNode, category }
+
+window.filterMapByFault = function(el) {
+  // Toggle: click the same fault again to clear
+  if (el.classList.contains('selected')) {
+    clearFaultFilter();
+    return;
+  }
+  document.querySelectorAll('.fault-clickable').forEach(x => x.classList.remove('selected'));
+  el.classList.add('selected');
+  faultFilter = {
+    faultId: el.dataset.faultId,
+    affectedLink: el.dataset.affectedLink,
+    affectedNode: el.dataset.affectedNode,
+    category: el.dataset.category,
+  };
+  document.getElementById('clearFaultFilter').style.display = 'inline-flex';
+  // Show filter chip near topology controls
+  const chip = document.getElementById('activeFilterChip');
+  chip.style.display = 'inline-flex';
+  chip.innerHTML = `
+    <span class="filter-chip">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg>
+      Filter: ${faultFilter.faultId}
+      <span class="filter-chip-x" onclick="clearFaultFilter()">×</span>
+    </span>`;
+  renderGeo();
+  renderLogical();
+};
+
+window.clearFaultFilter = function() {
+  faultFilter = null;
+  document.querySelectorAll('.fault-clickable').forEach(x => x.classList.remove('selected'));
+  document.getElementById('clearFaultFilter').style.display = 'none';
+  document.getElementById('activeFilterChip').style.display = 'none';
+  document.getElementById('activeFilterChip').innerHTML = '';
+  renderGeo();
+  renderLogical();
+};
+
+// Helper used by getFilteredLinks to apply fault filter
+function applyFaultFilter(links) {
+  if (!faultFilter) return links;
+  // affectedLink can be like "MUMBAI/NAGPUR" or "OFC-007"
+  const al = (faultFilter.affectedLink || '').toUpperCase();
+  const an = (faultFilter.affectedNode || '').toUpperCase();
+  return links.filter(l => {
+    // OFC link with matching link_id
+    if (l._kind === 'ofc' && l.link_id && al.includes(l.link_id.toUpperCase())) return true;
+    // Both endpoints match an "A/B" affected link string
+    if (al && al.includes('/')) {
+      const parts = al.split('/').map(s => s.trim());
+      if (parts.includes((l.from_node || '').toUpperCase()) && parts.includes((l.to_node || '').toUpperCase())) return true;
+    }
+    // Affected node matches either endpoint
+    if (an && (an === (l.from_node || '').toUpperCase() || an === (l.to_node || '').toUpperCase())) return true;
+    return false;
+  });
+}
+
+loadData();
+</script>
+{% endblock %}

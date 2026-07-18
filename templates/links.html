@@ -1,0 +1,471 @@
+{% extends "base.html" %}
+{% block title %}Links & Media | Vajr Comn State{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1 class="page-title">LINKS &amp; MEDIA <small>// FIBER + ALTERNATE</small></h1>
+  <div class="page-meta" id="linkMeta">—</div>
+</div>
+
+<div class="topo-controls">
+  <div class="toggle-group">
+    <button class="toggle-btn active" data-tab="ofc">OFC/JFC Links</button>
+    <button class="toggle-btn" data-tab="alt">Alternate Media</button>
+  </div>
+  <button class="btn btn-primary" id="addBtn">＋ Add Entry</button>
+</div>
+
+<div class="filters">
+  <input type="text" id="searchInput" placeholder="Search…" />
+  <select id="fromFilter"><option value="">All From</option></select>
+  <select id="toFilter"><option value="">All To</option></select>
+  <select id="statusFilter">
+    <option value="">All Status</option>
+    <option value="UP">UP</option>
+    <option value="DEGRADED">DEGRADED</option>
+    <option value="DOWN">DOWN</option>
+  </select>
+</div>
+
+<div class="card" id="tableCard">
+  <div class="tbl-wrap">
+    <table class="tbl" id="dataTable">
+      <thead></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Modal for add/edit -->
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="modalTitle">Add Entry</div>
+      <button class="close-btn" id="closeBtn">×</button>
+    </div>
+    <form id="entryForm">
+      <div class="form-grid" id="formFields"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+        <button type="button" class="btn" id="cancelBtn">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const SCHEMAS = {
+  ofc: {
+    table: 'ofc_links',
+    api: '/api/ofc',
+    label: 'OFC Link',
+    columns: [
+      { f: 'link_id', label: 'Link ID' },
+      { f: 'from_node', label: 'From', type: 'select-node' },
+      { f: 'to_node', label: 'To', type: 'select-node' },
+      { f: 'distance_km', label: 'Dist (km)', type: 'number' },
+      { f: 'year_laid', label: 'Year', type: 'number' },
+      { f: 'no_of_fiber', label: 'Total Fibers', type: 'number' },
+      { f: 'ribbon_count', label: 'Ribbon Count', type: 'number' },
+      { f: 'loss_db', label: 'Loss (dB)', type: 'number', step: '0.01' },
+      { f: 'no_dark_fiber', label: 'Dark', type: 'number' },
+      { f: 'cable_type', label: 'Cable Type' },
+      { f: 'margin_db', label: 'Margin (dB)', type: 'number', step: '0.01' },
+      { f: 'status', label: 'Status', type: 'select', options: ['UP', 'DEGRADED', 'DOWN'] },
+      { f: 'last_trace_date', label: 'Last Trace Date', type: 'date' },
+      { f: 'trace_taken_by', label: 'Trace Taken By' },
+      { f: 'remarks', label: 'Remarks', full: true },
+    ],
+  },
+  alt: {
+    table: 'alternate_media',
+    api: '/api/alternate',
+    label: 'Alternate Media',
+    columns: [
+      { f: 'media_type', label: 'Type', type: 'select', options: ['Microwave', 'Satellite', 'Broadband Radio', 'BTS', 'Copper JFC', 'Cellular Tower', 'URRF', 'RRF'] },
+      { f: 'from_node', label: 'From', type: 'select-node' },
+      { f: 'to_node', label: 'To (leave blank for Satellite only)', type: 'select-node' },
+      { f: 'spec', label: 'Freq/BW', full: true },
+      { f: 'hop_distance_km', label: 'Hop (km)', type: 'number' },
+      { f: 'status', label: 'Status', type: 'select', options: ['UP', 'DEGRADED', 'DOWN'] },
+      { f: 'remarks', label: 'Remarks', full: true },
+    ],
+  },
+};
+
+// Media types where to_node is hidden (only Satellite remains single-location)
+const SINGLE_LOC_TYPES = new Set(['Satellite']);
+
+let currentTab = 'ofc';
+let currentData = [];
+let editingId = null;
+
+async function loadTable() {
+  const schema = SCHEMAS[currentTab];
+  currentData = await fetch(schema.api).then(r => r.json());
+  // Populate From/To dropdowns with unique values present in the data
+  const froms = [...new Set(currentData.map(r => r.from_node).filter(Boolean))].sort();
+  const tos   = [...new Set(currentData.map(r => r.to_node).filter(Boolean))].sort();
+  const ff = document.getElementById('fromFilter');
+  const tf = document.getElementById('toFilter');
+  const oldF = ff.value, oldT = tf.value;
+  ff.innerHTML = '<option value="">All From</option>' + froms.map(n => `<option ${n===oldF?'selected':''}>${n}</option>`).join('');
+  tf.innerHTML = '<option value="">All To</option>'   + tos.map(n => `<option ${n===oldT?'selected':''}>${n}</option>`).join('');
+  renderTable();
+}
+
+function renderTable() {
+  const schema = SCHEMAS[currentTab];
+  const search = document.getElementById('searchInput').value.toLowerCase();
+  const statusF = document.getElementById('statusFilter').value;
+  const fromF = document.getElementById('fromFilter').value;
+  const toF = document.getElementById('toFilter').value;
+  const filtered = currentData.filter(r => {
+    if (statusF && r.status && r.status !== statusF) return false;
+    if (fromF && r.from_node !== fromF) return false;
+    if (toF && r.to_node !== toF) return false;
+    if (!search) return true;
+    return Object.values(r).some(v => String(v).toLowerCase().includes(search));
+  });
+
+  const thead = document.querySelector('#dataTable thead');
+  thead.innerHTML = '<tr>' + schema.columns.map(c => `<th>${c.label}</th>`).join('') + '<th></th></tr>';
+
+  const tbody = document.querySelector('#dataTable tbody');
+  if (!filtered.length) {
+    tbody.innerHTML = `<tr><td colspan="${schema.columns.length + 1}" class="empty">No entries</td></tr>`;
+  } else {
+    tbody.innerHTML = filtered.map(row => {
+      const cells = schema.columns.map(c => {
+        let val = row[c.f];
+        if (c.f === 'to_node' && (val === null || val === undefined || val === '')) {
+          val = '<em style="color:var(--text-faint)">(local)</em>';
+        } else if (val === null || val === undefined || val === '') {
+          val = '—';
+        }
+        if (c.f === 'status') {
+          val = `<span class="badge badge-${String(row[c.f]).toLowerCase()}">${row[c.f]}</span>`;
+        } else if (c.f === 'link_id' && row[c.f]) {
+          // Make link_id clickable to open fiber detail (only on OFC tab)
+          val = `<span class="linkid-clickable mono" onclick="showOfcDetail(${row.id})">${row[c.f]}</span>`;
+        } else if (['from_node', 'to_node'].includes(c.f) && row[c.f]) {
+          val = `<span class="mono">${row[c.f]}</span>`;
+        }
+        return `<td class="${['from_node','to_node'].includes(c.f) ? 'mono' : ''}">${val}</td>`;
+      }).join('');
+      return `<tr>
+        ${cells}
+        <td><div class="row-actions">
+          <button class="btn btn-sm" onclick="editRow(${row.id})">Edit</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteRow(${row.id})">Del</button>
+        </div></td>
+      </tr>`;
+    }).join('');
+  }
+
+  document.getElementById('linkMeta').textContent = `${filtered.length} of ${currentData.length} ${schema.label.toLowerCase()}`;
+}
+
+// Cached node list for dropdowns
+let nodeOptions = [];
+async function loadNodeOptions(force) {
+  if (force || nodeOptions.length === 0) {
+    nodeOptions = (await fetch('/api/nodes').then(r => r.json())).map(n => n.name).sort();
+  }
+  return nodeOptions;
+}
+
+function buildForm(data = {}) {
+  const schema = SCHEMAS[currentTab];
+  const wrap = document.getElementById('formFields');
+  wrap.innerHTML = schema.columns.map(c => {
+    let input;
+    if (c.type === 'select') {
+      input = `<select name="${c.f}">
+        ${c.options.map(o => `<option ${data[c.f]===o?'selected':''}>${o}</option>`).join('')}
+      </select>`;
+    } else if (c.type === 'select-node') {
+      input = `<select name="${c.f}">
+        <option value="">— select node —</option>
+        ${nodeOptions.map(n => `<option ${data[c.f]===n?'selected':''}>${n}</option>`).join('')}
+      </select>`;
+    } else if (c.type === 'number') {
+      input = `<input type="number" name="${c.f}" step="${c.step||'1'}" value="${data[c.f] ?? ''}">`;
+    } else if (c.type === 'date') {
+      const v = data[c.f] ? String(data[c.f]).slice(0, 10) : '';
+      input = `<input type="date" name="${c.f}" value="${v}">`;
+    } else {
+      input = `<input type="text" name="${c.f}" value="${data[c.f] ?? ''}">`;
+    }
+    return `<div class="${c.full ? 'full' : ''}" data-field="${c.f}">
+      <label>${c.label}</label>
+      ${input}
+    </div>`;
+  }).join('');
+
+  // For alt media: hide To/Hop fields when media type is single-location (Satellite only)
+  if (currentTab === 'alt') {
+    const mediaSelect = wrap.querySelector('[name=media_type]');
+    const updateToVisibility = () => {
+      const isSingle = SINGLE_LOC_TYPES.has(mediaSelect.value);
+      const toField = wrap.querySelector('[data-field=to_node]');
+      const hopField = wrap.querySelector('[data-field=hop_distance_km]');
+      if (toField) toField.style.display = isSingle ? 'none' : '';
+      if (hopField) hopField.style.display = isSingle ? 'none' : '';
+      if (isSingle) {
+        wrap.querySelector('[name=to_node]').value = '';
+        wrap.querySelector('[name=hop_distance_km]').value = '';
+      }
+    };
+    mediaSelect.onchange = updateToVisibility;
+    updateToVisibility();
+  }
+}
+
+window.editRow = async function(id) {
+  const row = currentData.find(r => r.id === id);
+  if (!row) return;
+  editingId = id;
+  await loadNodeOptions();
+  document.getElementById('modalTitle').textContent = 'Edit ' + SCHEMAS[currentTab].label;
+  buildForm(row);
+  document.getElementById('modalBg').classList.add('show');
+};
+
+window.deleteRow = async function(id) {
+  if (!confirm('Delete this entry?')) return;
+  await fetch(`/api/${SCHEMAS[currentTab].table}/${id}`, { method: 'DELETE' });
+  if (currentTab === 'nodes') nodeOptions = [];
+  loadTable();
+};
+
+document.getElementById('addBtn').onclick = async () => {
+  editingId = null;
+  await loadNodeOptions();
+  document.getElementById('modalTitle').textContent = 'Add ' + SCHEMAS[currentTab].label;
+  const defaults = (currentTab === 'nodes') ? {} : { status: 'UP' };
+  buildForm(defaults);
+  document.getElementById('modalBg').classList.add('show');
+};
+
+document.getElementById('closeBtn').onclick = document.getElementById('cancelBtn').onclick = () => {
+  document.getElementById('modalBg').classList.remove('show');
+};
+
+document.getElementById('entryForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const schema = SCHEMAS[currentTab];
+  const fd = new FormData(e.target);
+  const data = {};
+  schema.columns.forEach(c => {
+    let v = fd.get(c.f);
+    if (v === '' || v == null) v = null;
+    else if (c.type === 'number') v = parseFloat(v);
+    data[c.f] = v;
+  });
+  const url = editingId ? `/api/${schema.table}/${editingId}` : `/api/${schema.table}`;
+  const method = editingId ? 'PUT' : 'POST';
+  const resp = await fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  const result = await resp.json();
+  if (result.error) {
+    alert('Error: ' + result.error);
+    return;
+  }
+  document.getElementById('modalBg').classList.remove('show');
+  // If we just modified a node, invalidate the cached node list
+  if (currentTab === 'nodes') {
+    nodeOptions = [];
+  }
+  loadTable();
+};
+
+document.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-tab]').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  currentTab = b.dataset.tab;
+  // Hide status filter for nodes tab (no status field)
+  document.getElementById('statusFilter').style.display = (currentTab === 'nodes') ? 'none' : '';
+  loadTable();
+}));
+
+document.getElementById('searchInput').oninput = renderTable;
+document.getElementById('statusFilter').onchange = renderTable;
+document.getElementById('fromFilter').onchange = renderTable;
+document.getElementById('toFilter').onchange = renderTable;
+
+// =============================================================================
+// OFC fiber detail: clicking a Link ID opens a modal showing all ribbons & fibers
+// Each fiber is colored by status. Click a fiber to assign/unassign ports.
+// =============================================================================
+let currentOfcDetail = null;
+
+window.showOfcDetail = async function(ofcId) {
+  const data = await fetch(`/api/ofc-detail/${ofcId}`).then(r => r.json());
+  currentOfcDetail = data;
+  let modal = document.getElementById('ofcDetailModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'ofcDetailModal';
+    modal.className = 'modal-bg';
+    modal.innerHTML = `
+      <div class="modal modal-wide">
+        <div class="modal-head">
+          <div class="modal-title" id="odTitle">Fiber Detail</div>
+          <button class="close-btn" id="odClose">×</button>
+        </div>
+        <div id="odBody"></div>
+      </div>`;
+    document.body.appendChild(modal);
+    modal.querySelector('#odClose').onclick = () => modal.classList.remove('show');
+    modal.onclick = (e) => { if (e.target === modal) modal.classList.remove('show'); };
+  }
+  renderOfcDetail();
+  modal.classList.add('show');
+};
+
+function renderOfcDetail() {
+  const d = currentOfcDetail;
+  document.getElementById('odTitle').textContent = `${d.link_id} — ${d.from_node} ↔ ${d.to_node}`;
+
+  let html = `
+    <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:16px;font-size:13px;">
+      <div><strong>Status:</strong> <span class="badge badge-${d.status.toLowerCase()}">${d.status}</span></div>
+      <div><strong>Distance:</strong> ${d.distance_km || '—'} km</div>
+      <div><strong>Total fibers:</strong> ${d.no_of_fiber}</div>
+      <div><strong>Ribbons:</strong> ${d.ribbon_count}</div>
+      <div><strong>Cable:</strong> ${d.cable_type || '—'}</div>
+      <div><strong>Last trace:</strong> ${d.last_trace_date || '—'} by ${d.trace_taken_by || '—'}</div>
+    </div>
+
+    <div class="fiber-legend">
+      <div class="fiber-legend-item"><span class="fiber-legend-swatch" style="background:#e2e8f0;"></span>Free (not connected)</div>
+      <div class="fiber-legend-item"><span class="fiber-legend-swatch" style="background:#d1fae5;"></span>Connected — Active</div>
+      <div class="fiber-legend-item"><span class="fiber-legend-swatch" style="background:#fee2e2;"></span>Connected — Down</div>
+      <div class="fiber-legend-item"><span class="fiber-legend-swatch" style="background:#fef3c7;"></span>Reserved</div>
+    </div>
+  `;
+
+  d.ribbons.forEach(rb => {
+    html += `<div class="fiber-ribbon">
+      <div class="fiber-ribbon-head">
+        <span>Ribbon ${rb.ribbon_number}</span>
+        <span>${rb.fiber_count} fibers</span>
+      </div>
+      <div class="fiber-grid">
+        ${rb.fibers.map(f => `
+          <div class="fiber-cell fiber-${f.status}" onclick="editFiber(${f.id})" title="Fiber ${f.fiber_number} — ${f.status}${f.from_port_label ? ' | ' + (f.from_equipment_id||'') + ':' + f.from_port_label + ' ↔ ' + (f.to_equipment_id||'') + ':' + (f.to_port_label||'') : ''}">
+            <div class="fnum">F${f.fiber_number}</div>
+            <div class="fdot"></div>
+          </div>
+        `).join('')}
+      </div>
+    </div>`;
+  });
+  document.getElementById('odBody').innerHTML = html;
+}
+
+window.editFiber = async function(fiberId) {
+  // Find the fiber in our cached data
+  let fiber = null;
+  for (const rb of currentOfcDetail.ribbons) {
+    fiber = rb.fibers.find(f => f.id === fiberId);
+    if (fiber) break;
+  }
+  if (!fiber) return;
+
+  // Fetch available ports at both ends
+  const [fromPorts, toPorts] = await Promise.all([
+    fetch(`/api/available-ports/${encodeURIComponent(currentOfcDetail.from_node)}`).then(r => r.json()),
+    fetch(`/api/available-ports/${encodeURIComponent(currentOfcDetail.to_node)}`).then(r => r.json()),
+  ]);
+
+  const portOption = (port, selected) => {
+    const isSel = port.id === selected;
+    const labelStatus = port.status !== 'UNUSED' && !isSel ? ' [in use]' : '';
+    return `<option value="${port.id}" ${isSel ? 'selected' : ''}>${port.equipment_id} : ${port.port_label} (${port.bandwidth || '—'})${labelStatus}</option>`;
+  };
+
+  let modal = document.getElementById('fiberEditModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'fiberEditModal';
+    modal.className = 'modal-bg';
+    document.body.appendChild(modal);
+  }
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-head">
+        <div class="modal-title">Fiber ${fiber.fiber_number}</div>
+        <button class="close-btn" onclick="document.getElementById('fiberEditModal').classList.remove('show')">×</button>
+      </div>
+      <form id="fiberForm">
+        <div class="form-grid">
+          <div class="full">
+            <label>Status</label>
+            <select name="status">
+              <option ${fiber.status==='FREE'?'selected':''}>FREE</option>
+              <option ${fiber.status==='CONNECTED-ACTIVE'?'selected':''}>CONNECTED-ACTIVE</option>
+              <option ${fiber.status==='CONNECTED-DOWN'?'selected':''}>CONNECTED-DOWN</option>
+              <option ${fiber.status==='RESERVED'?'selected':''}>RESERVED</option>
+            </select>
+          </div>
+          <div class="full">
+            <label>From Port (${currentOfcDetail.from_node})</label>
+            <select name="from_port_id">
+              <option value="">— not connected —</option>
+              ${fromPorts.map(p => portOption(p, fiber.from_port_id)).join('')}
+            </select>
+          </div>
+          <div class="full">
+            <label>To Port (${currentOfcDetail.to_node})</label>
+            <select name="to_port_id">
+              <option value="">— not connected —</option>
+              ${toPorts.map(p => portOption(p, fiber.to_port_id)).join('')}
+            </select>
+          </div>
+          <div class="full">
+            <label>Remarks</label>
+            <input type="text" name="remarks" value="${fiber.remarks || ''}">
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+          <button type="button" class="btn" onclick="document.getElementById('fiberEditModal').classList.remove('show')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>`;
+  modal.classList.add('show');
+
+  document.getElementById('fiberForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const body = {
+      status: fd.get('status'),
+      from_port_id: fd.get('from_port_id') || null,
+      to_port_id: fd.get('to_port_id') || null,
+      remarks: fd.get('remarks') || '',
+    };
+    const r = await fetch(`/api/fiber/${fiberId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const j = await r.json();
+    if (j.error) { alert(j.error); return; }
+    document.getElementById('fiberEditModal').classList.remove('show');
+    // Refresh OFC detail
+    const data = await fetch(`/api/ofc-detail/${currentOfcDetail.id}`).then(r => r.json());
+    currentOfcDetail = data;
+    renderOfcDetail();
+  };
+};
+
+loadTable();
+</script>
+{% endblock %}

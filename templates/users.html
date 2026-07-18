@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% block title %}Users | Vajr Comn State{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      Users &amp; Roles
+    </h1>
+  </div>
+  <div class="page-meta" id="userMeta">—</div>
+</div>
+
+<div class="grid-2">
+  <div>
+    <div class="topo-controls" style="margin-bottom:14px;">
+      <button class="btn btn-primary" id="addBtn">＋ Add User</button>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title">All Users</div>
+      </div>
+      <div class="tbl-wrap">
+        <table class="tbl" id="dataTable">
+          <thead>
+            <tr>
+              <th>Username</th>
+              <th>Full Name</th>
+              <th>Role</th>
+              <th>Created</th>
+              <th>Last Login</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div>
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title">Available Roles</div>
+      </div>
+      <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px;">
+        Admin sees everything. Formation-based roles (auto-created from nodes table) see only their formation's nodes, links, equipment, and faults.
+      </p>
+      <div id="rolesList" style="display:flex;flex-direction:column;gap:6px;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Add User modal -->
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="modalTitle">Add User</div>
+      <button class="close-btn" id="closeBtn">×</button>
+    </div>
+    <form id="entryForm">
+      <div class="form-grid">
+        <div>
+          <label>Username</label>
+          <input type="text" name="username" required>
+        </div>
+        <div>
+          <label>Full Name</label>
+          <input type="text" name="full_name">
+        </div>
+        <div>
+          <label>Password</label>
+          <input type="password" name="password" required minlength="4">
+        </div>
+        <div>
+          <label>Role</label>
+          <select name="role" id="roleSelect" required></select>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+        <button type="button" class="btn" id="cancelBtn">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allRoles = [];
+
+async function loadRoles() {
+  allRoles = await fetch('/api/roles').then(r => r.json());
+  const sel = document.getElementById('roleSelect');
+  sel.innerHTML = allRoles.map(r => `<option value="${r.name}">${r.name}</option>`).join('');
+
+  const list = document.getElementById('rolesList');
+  list.innerHTML = allRoles.map(r => {
+    const isAdmin = r.name === 'Admin';
+    return `
+      <div style="padding:10px 12px;background:var(--bg-subtle);border-left:3px solid ${isAdmin ? 'var(--bad)' : 'var(--info)'};border-radius:6px;">
+        <div style="font-weight:700;color:var(--text);font-size:13px;">${r.name}</div>
+        <div style="font-size:11px;color:var(--text-faint);margin-top:2px;">${r.description || ''}</div>
+      </div>`;
+  }).join('');
+}
+
+async function loadUsers() {
+  const users = await fetch('/api/users').then(r => r.json());
+  const tbody = document.querySelector('#dataTable tbody');
+  if (!users.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No users</td></tr>';
+  } else {
+    tbody.innerHTML = users.map(u => `
+      <tr>
+        <td class="mono"><strong>${u.username}</strong></td>
+        <td>${u.full_name || '—'}</td>
+        <td><span class="badge badge-${u.role==='Admin' ? 'high' : 'low'}">${u.role}</span></td>
+        <td style="font-size:11px;color:var(--text-faint);">${(u.created_at || '').slice(0,10)}</td>
+        <td style="font-size:11px;color:var(--text-faint);">${u.last_login ? u.last_login.slice(0,16).replace('T',' ') : 'never'}</td>
+        <td><div class="row-actions">
+          <button class="btn btn-sm" onclick="changePassword(${u.id}, '${u.username}')">Reset PW</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteUser(${u.id}, '${u.username}')">Del</button>
+        </div></td>
+      </tr>`).join('');
+  }
+  document.getElementById('userMeta').textContent = `${users.length} user${users.length === 1 ? '' : 's'}`;
+}
+
+window.deleteUser = async (id, username) => {
+  if (!confirm(`Delete user "${username}"?`)) return;
+  const r = await fetch(`/api/users/${id}`, { method: 'DELETE' });
+  const j = await r.json();
+  if (j.error) { alert(j.error); return; }
+  loadUsers();
+};
+
+window.changePassword = async (id, username) => {
+  const newPw = prompt(`Enter new password for "${username}" (min 4 chars):`);
+  if (!newPw || newPw.length < 4) return;
+  const r = await fetch(`/api/users/${id}/password`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: newPw }),
+  });
+  const j = await r.json();
+  if (j.error) alert(j.error);
+  else alert('Password updated.');
+};
+
+document.getElementById('addBtn').onclick = async () => {
+  await loadRoles();
+  document.getElementById('entryForm').reset();
+  document.getElementById('modalBg').classList.add('show');
+};
+document.getElementById('closeBtn').onclick = document.getElementById('cancelBtn').onclick = () =>
+  document.getElementById('modalBg').classList.remove('show');
+
+document.getElementById('entryForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const body = Object.fromEntries(fd.entries());
+  const r = await fetch('/api/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json();
+  if (j.error) { alert(j.error); return; }
+  document.getElementById('modalBg').classList.remove('show');
+  loadUsers();
+};
+
+loadRoles();
+loadUsers();
+</script>
+{% endblock %}
