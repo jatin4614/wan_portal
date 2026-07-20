@@ -65,7 +65,7 @@
     Download a blank Excel template pre-formatted with the latest column layout for each data type.
     Fill in your data and upload it back in section 3 to sync the system.
   </p>
-  <a href="/api/template-excel" class="btn btn-primary">⬇ Download wan_template.xlsx</a>
+  <a href="{{ request.script_root }}/api/template-excel" class="btn btn-primary">⬇ Download wan_template.xlsx</a>
   <div style="margin-top:16px;font-size:12px;color:var(--text-faint);line-height:1.7;">
     <strong style="color:var(--text-dim);">Sheets included:</strong><br>
     <span class="mono">Nodes</span> ·
@@ -124,7 +124,7 @@
     Download a single Excel workbook containing all current data — one sheet per category.
     Use this to back up your data, or as a starting point for bulk edits before re-uploading via section 3.
   </p>
-  <a href="/api/export-excel" class="btn btn-primary">⬇ Download wan_data.xlsx</a>
+  <a href="{{ request.script_root }}/api/export-excel" class="btn btn-primary">⬇ Download wan_data.xlsx</a>
 </div>
 
 <!-- ============ 5. Seed Hierarchy Data ============ -->

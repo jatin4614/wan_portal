@@ -6,6 +6,27 @@
   <title>{% block title %}Vajr Comn State Portal{% endblock %}</title>
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/logo-sm.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <script>
+    // APP_ROOT is the URL prefix this app is mounted under ("" at the site root,
+    // "/wanportal" when hosted as an IIS sub-application). request.script_root is
+    // set by PrefixMiddleware. Every fetch() in the templates uses absolute paths
+    // like "/api/...", so wrap fetch to transparently prepend the prefix. This
+    // keeps all ~47 AJAX calls working under a sub-path with no per-call edits.
+    window.APP_ROOT = {{ request.script_root | tojson }};
+    (function () {
+      var root = window.APP_ROOT || "";
+      if (!root) return;                       // served at root: nothing to do
+      var _fetch = window.fetch.bind(window);
+      window.fetch = function (input, init) {
+        if (typeof input === "string"
+            && input.charAt(0) === "/" && input.charAt(1) !== "/"
+            && input !== root && input.indexOf(root + "/") !== 0) {
+          input = root + input;
+        }
+        return _fetch(input, init);
+      };
+    })();
+  </script>
   {% block head_extra %}{% endblock %}
 </head>
 <body>
@@ -157,7 +178,9 @@
   <script>
     // Active nav highlighting
     (function() {
-      const path = window.location.pathname;
+      let path = window.location.pathname;
+      const root = window.APP_ROOT || "";
+      if (root && path.indexOf(root) === 0) path = path.slice(root.length) || "/";
       const map = {
         '/': 'dashboard',
         '/nodes': 'nodes',

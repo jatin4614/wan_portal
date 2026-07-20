@@ -2,9 +2,9 @@
 {% block title %}Dashboard | Vajr Comn State{% endblock %}
 
 {% block head_extra %}
-<link rel="stylesheet" href="/static/vendor/leaflet.css" />
-<script src="/static/vendor/leaflet.js"></script>
-<script src="/static/vendor/vis-network.min.js"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/leaflet.css') }}" />
+<script src="{{ url_for('static', filename='vendor/leaflet.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/vis-network.min.js') }}"></script>
 <!-- MapLibre GL + PMTiles + leaflet-maplibre-gl plugin: only used when a .pmtiles
      file is the active offline map. Loaded conditionally below to avoid the
      ~1 MB cost when not needed. -->
@@ -508,8 +508,8 @@ async function renderGeo() {
         // Register pmtiles:// protocol with MapLibre, pointing at our backend
         const protocol = new pmtiles.Protocol();
         maplibregl.addProtocol('pmtiles', protocol.tile);
-        const pmtilesUrl = `pmtiles://${location.origin}/api/pmtiles`;
-        const p = new pmtiles.PMTiles(`${location.origin}/api/pmtiles`);
+        const pmtilesUrl = `pmtiles://${location.origin}${window.APP_ROOT || ''}/api/pmtiles`;
+        const p = new pmtiles.PMTiles(`${location.origin}${window.APP_ROOT || ''}/api/pmtiles`);
         protocol.add(p);
 
         // Use the Protomaps "light" style — works with Protomaps planet tiles
@@ -537,7 +537,7 @@ async function renderGeo() {
       // Raster PMTiles: use the pmtiles JS library to fetch raster tiles
       try {
         await loadScript('https://unpkg.com/pmtiles@3.0.7/dist/pmtiles.js');
-        const p = new pmtiles.PMTiles(`${location.origin}/api/pmtiles`);
+        const p = new pmtiles.PMTiles(`${location.origin}${window.APP_ROOT || ''}/api/pmtiles`);
         const tilesLayer = L.gridLayer({
           maxZoom: pmtilesInfo.maxzoom || 18,
           minZoom: pmtilesInfo.minzoom || 0,
@@ -559,7 +559,7 @@ async function renderGeo() {
           { maxZoom: 19 }).addTo(geoMap);
       }
     } else if (offlineKind === 'mbtiles') {
-      L.tileLayer('/tiles/{z}/{x}/{y}.png', {
+      L.tileLayer((window.APP_ROOT || '') + '/tiles/{z}/{x}/{y}.png', {
         maxZoom: (mbtilesInfo && mbtilesInfo.maxzoom) || 18,
         minZoom: (mbtilesInfo && mbtilesInfo.minzoom) || 0,
       }).addTo(geoMap);

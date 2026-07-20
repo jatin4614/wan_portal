@@ -455,7 +455,7 @@ function renderEquipDetail() {
       ${d.ports.map(p => {
         const fiber = p.connected_fiber;
         const conn = fiber
-          ? `<span class="linkid-clickable" onclick="window.location.href='/links?focus=${fiber.link_id}'">${fiber.link_id}</span> · R${fiber.ribbon_number}/F${fiber.fiber_number}`
+          ? `<span class="linkid-clickable" onclick="window.location.href='${window.APP_ROOT || ''}/links?focus=${fiber.link_id}'">${fiber.link_id}</span> · R${fiber.ribbon_number}/F${fiber.fiber_number}`
           : '<span style="color:var(--text-faint)">—</span>';
         return `
           <div class="port-row port-${p.status}" style="grid-template-columns:80px 90px 90px 90px 1fr auto;">

@@ -2,7 +2,7 @@
 {% block title %}Analytics | Vajr Comn State{% endblock %}
 
 {% block head_extra %}
-<script src="/static/vendor/chart.umd.min.js"></script>
+<script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
 {% endblock %}
 
 {% block content %}

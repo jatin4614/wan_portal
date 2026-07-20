@@ -44,6 +44,37 @@ else:
     app.config["MAX_CONTENT_LENGTH"] = None  # no limit
 
 
+# ---------------------------------------------------------------------------
+# Sub-path hosting (IIS application under /wanportal, nginx location, etc.)
+# ---------------------------------------------------------------------------
+# When this app is mounted under a URL prefix, the reverse proxy (IIS
+# HttpPlatformHandler) forwards the FULL path -- e.g. /wanportal/login -- to us.
+# Flask's routes are defined at the root (/login), so without help every request
+# would 404. This middleware moves the configured prefix out of PATH_INFO and
+# into SCRIPT_NAME, which makes Flask's routing match AND makes url_for() /
+# request.script_root generate correctly-prefixed URLs.
+#
+# Controlled by the URL_PREFIX environment variable (set in web.config on the
+# server). Empty/unset => served at the root, so a plain `python app.py` still
+# works at http://localhost:5000/ with no prefix.
+class PrefixMiddleware:
+    def __init__(self, wsgi_app, prefix=""):
+        self.wsgi_app = wsgi_app
+        p = (prefix or "").strip().strip("/")
+        self.prefix = ("/" + p) if p else ""
+
+    def __call__(self, environ, start_response):
+        if self.prefix:
+            path = environ.get("PATH_INFO", "")
+            if path == self.prefix or path.startswith(self.prefix + "/"):
+                environ["SCRIPT_NAME"] = self.prefix + environ.get("SCRIPT_NAME", "")
+                environ["PATH_INFO"] = path[len(self.prefix):] or "/"
+        return self.wsgi_app(environ, start_response)
+
+
+app.wsgi_app = PrefixMiddleware(app.wsgi_app, os.environ.get("URL_PREFIX", ""))
+
+
 # Friendly 413 handler that explains exactly what to do
 @app.errorhandler(413)
 def too_large(e):
@@ -481,7 +512,9 @@ def login_required(f):
             # API requests get JSON, page requests get a redirect
             if request.path.startswith("/api/"):
                 return jsonify({"error": "auth required"}), 401
-            return redirect(url_for("login_view", next=request.path))
+            # Carry the mount prefix in `next` so post-login redirect stays
+            # inside the app when hosted under a sub-path (script_root is '' at root).
+            return redirect(url_for("login_view", next=request.script_root + request.path))
         return f(*args, **kwargs)
     return wrapper
 
@@ -1723,7 +1756,13 @@ def login_view():
                 (datetime.now().isoformat(timespec="seconds"), user["id"]),
             )
             conn.commit()
-        next_url = request.args.get("next") or url_for("dashboard")
+        # Only follow `next` if it is a same-origin, in-app relative path. Reject
+        # absolute URLs ("http(s)://evil"), protocol-relative ("//evil") and their
+        # backslash-normalized bypasses ("/\evil") to avoid an open redirect.
+        next_url = request.args.get("next") or ""
+        _n = next_url.replace("\\", "/")
+        if not next_url or not _n.startswith("/") or _n.startswith("//"):
+            next_url = url_for("dashboard")
         return redirect(next_url)
     return render_template("login.html")
 
