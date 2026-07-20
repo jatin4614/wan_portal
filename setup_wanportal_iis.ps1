@@ -206,12 +206,19 @@ try {
     if ($PSVersionTable.PSVersion.Major -ge 6) {
         $r = Invoke-WebRequest "https://localhost/$appAlias/login" -UseBasicParsing -TimeoutSec 30 -SkipCertificateCheck
     } else {
-        add-type @"
-using System.Net; using System.Security.Cryptography.X509Certificates;
-public class _TA : ICertificatePolicy { public bool CheckValidationResult(ServicePoint a,X509Certificate b,WebRequest c,int d){return true;} }
-"@
-        [System.Net.ServicePointManager]::CertificatePolicy = New-Object _TA
-        $r = Invoke-WebRequest "https://localhost/$appAlias/login" -UseBasicParsing -TimeoutSec 30
+        # Windows PowerShell 5.1: trust the localhost cert for this self-test.
+        # Use a validation CALLBACK, not add-type of a named class -- defining the
+        # same named type twice in one PowerShell window throws
+        # "type '_TA' already exists", which is what broke this step on a re-run.
+        # A callback has no named type, so it is fully re-run safe.
+        $prevCb = [System.Net.ServicePointManager]::ServerCertificateValidationCallback
+        [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+        try {
+            [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+            $r = Invoke-WebRequest "https://localhost/$appAlias/login" -UseBasicParsing -TimeoutSec 30
+        } finally {
+            [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $prevCb
+        }
     }
     if ($r.StatusCode -eq 200) {
         Write-Host "`n  SUCCESS: https://localhost/$appAlias/login returned HTTP 200" -ForegroundColor Green
